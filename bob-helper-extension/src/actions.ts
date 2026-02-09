@@ -84,15 +84,24 @@ export async function sendPrompt(text: string): Promise<ActionResult> {
         // Step 1: Focus the agent panel
         log(`[sendPrompt] Step 1: Focusing agentPanel`);
         await vscode.commands.executeCommand('antigravity.agentPanel.focus');
-        await sleep(300);
+        await sleep(200);
         
-        // Step 2: Copy text to clipboard
-        log(`[sendPrompt] Step 2: Copying to clipboard`);
+        // Step 2: Activate chat input (sendTextToChat with empty string focuses the input)
+        log(`[sendPrompt] Step 2: Activating chat input`);
+        try {
+            await vscode.commands.executeCommand('antigravity.sendTextToChat', true, '');
+        } catch {
+            // Ignore errors - this is just to focus the input
+        }
+        await sleep(200);
+        
+        // Step 3: Copy text to clipboard
+        log(`[sendPrompt] Step 3: Copying to clipboard`);
         await vscode.env.clipboard.writeText(text);
         await sleep(100);
         
-        // Step 3: Paste from clipboard (Ctrl+V / Cmd+V)
-        log(`[sendPrompt] Step 3: Pasting from clipboard`);
+        // Step 4: Paste from clipboard (Ctrl+V / Cmd+V)
+        log(`[sendPrompt] Step 4: Pasting from clipboard`);
         await vscode.commands.executeCommand('editor.action.clipboardPasteAction');
         await sleep(400);
         

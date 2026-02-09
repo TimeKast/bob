@@ -9,7 +9,9 @@ import { log } from './logger';
 let lastStepIndex = -1;
 let stepIndexStableCount = 0;
 let lastAgentWorking: boolean | null = null; // null = first run
-const STABLE_POLLS_FOR_IDLE = 6;
+// Agent is considered idle only after step index is stable for this many polls
+// At ~5s per poll, 12 polls = ~60 seconds of no step changes
+const STABLE_POLLS_FOR_IDLE = 12;
 
 export async function readAntigravityState(): Promise<AntigravityState> {
     const workspaceName = vscode.workspace.workspaceFolders?.[0]?.name || 'unknown';

@@ -3843,7 +3843,7 @@ var init_stateReader = __esm({
     lastStepIndex = -1;
     stepIndexStableCount = 0;
     lastAgentWorking = null;
-    STABLE_POLLS_FOR_IDLE = 6;
+    STABLE_POLLS_FOR_IDLE = 12;
     StateWatcher = class {
       interval = null;
       lastState = "";
@@ -3913,11 +3913,17 @@ async function sendPrompt(text) {
   try {
     log3(`[sendPrompt] Step 1: Focusing agentPanel`);
     await vscode2.commands.executeCommand("antigravity.agentPanel.focus");
-    await sleep(300);
-    log3(`[sendPrompt] Step 2: Copying to clipboard`);
+    await sleep(200);
+    log3(`[sendPrompt] Step 2: Activating chat input`);
+    try {
+      await vscode2.commands.executeCommand("antigravity.sendTextToChat", true, "");
+    } catch {
+    }
+    await sleep(200);
+    log3(`[sendPrompt] Step 3: Copying to clipboard`);
     await vscode2.env.clipboard.writeText(text);
     await sleep(100);
-    log3(`[sendPrompt] Step 3: Pasting from clipboard`);
+    log3(`[sendPrompt] Step 4: Pasting from clipboard`);
     await vscode2.commands.executeCommand("editor.action.clipboardPasteAction");
     await sleep(400);
     const workspaceName = vscode2.workspace.workspaceFolders?.[0]?.name || "";
