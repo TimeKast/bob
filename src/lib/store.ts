@@ -854,6 +854,15 @@ async function pollOnce(): Promise<void> {
 
                 // Chat ready — send prompt
                 if (silentState.hasEnterButton && !silentState.agentWorking) {
+                    // Cooldown: Don't send another prompt if we sent one recently
+                    const promptCooldownMs = 30000; // 30 seconds
+                    const timeSinceLastPrompt = Date.now() - (instance.lastPromptSent || 0);
+                    
+                    if (timeSinceLastPrompt < promptCooldownMs) {
+                        console.log(`[${instance.projectName}] ⏳ Cooldown: waiting ${Math.ceil((promptCooldownMs - timeSinceLastPrompt) / 1000)}s before next prompt`);
+                        continue;
+                    }
+                    
                     const prompt = instance.customPrompt || currentSettings.autoPrompt;
                     console.log(`[${instance.projectName}] 🔇 Sending prompt: "${prompt.substring(0, 50)}..."`);
                     await sendPromptSilent(instance.silentWindowId, prompt);

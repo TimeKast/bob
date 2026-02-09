@@ -167,18 +167,6 @@
       <span class="stat">
         📋 {instance.currentIssue}/{instance.totalIssues} issues
       </span>
-      <span class="stat">
-        🔄 {instance.stepCount} steps
-      </span>
-      {#if instance.retryCount > 0}
-        <span class="stat retry">
-          ⚠️ Retry {instance.retryCount}/{$settings.maxRetries}
-        </span>
-      {:else}
-        <span class="stat">
-          🔄 Retries: 0/{$settings.maxRetries}
-        </span>
-      {/if}
     </div>
 
     <div class="meta">

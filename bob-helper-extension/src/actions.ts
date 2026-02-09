@@ -72,7 +72,7 @@ export async function retryAction(): Promise<ActionResult> {
 }
 /**
  * Send a prompt to Antigravity's chat.
- * Uses sendTextToChat to write, then asks BOB to simulate Enter key press.
+ * Uses clipboard + paste approach (more reliable than sendTextToChat)
  */
 export async function sendPrompt(text: string): Promise<ActionResult> {
     const { log } = await import('./logger');
@@ -81,19 +81,24 @@ export async function sendPrompt(text: string): Promise<ActionResult> {
     log(`[sendPrompt] Starting with text: "${text.substring(0, 50)}..."`);
     
     try {
-        // Write text to chat input
-        log(`[sendPrompt] Writing text with sendTextToChat`);
-        await vscode.commands.executeCommand('antigravity.sendTextToChat', true, text);
+        // Step 1: Focus the agent panel
+        log(`[sendPrompt] Step 1: Focusing agentPanel`);
+        await vscode.commands.executeCommand('antigravity.agentPanel.focus');
+        await sleep(300);
+        
+        // Step 2: Copy text to clipboard
+        log(`[sendPrompt] Step 2: Copying to clipboard`);
+        await vscode.env.clipboard.writeText(text);
+        await sleep(100);
+        
+        // Step 3: Paste from clipboard (Ctrl+V / Cmd+V)
+        log(`[sendPrompt] Step 3: Pasting from clipboard`);
+        await vscode.commands.executeCommand('editor.action.clipboardPasteAction');
         await sleep(400);
         
-        // Focus the chat input
-        log(`[sendPrompt] Focusing with agentPanel.focus`);
-        await vscode.commands.executeCommand('antigravity.agentPanel.focus');
-        await sleep(200);
-        
-        // Ask BOB to simulate Alt+Enter to submit
+        // Step 4: Simulate Alt+Enter to submit
         const workspaceName = vscode.workspace.workspaceFolders?.[0]?.name || '';
-        log(`[sendPrompt] Sending simulateEnter to BOB (workspace: ${workspaceName})`);
+        log(`[sendPrompt] Step 4: Sending simulateEnter to BOB (workspace: ${workspaceName})`);
         send({
             type: 'simulateEnter',
             payload: { workspaceName },

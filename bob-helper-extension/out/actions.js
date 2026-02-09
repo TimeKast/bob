@@ -112,9 +112,30 @@ async function sendPrompt(text) {
     const { send } = await Promise.resolve().then(() => __importStar(require('./extension')));
     log(`[sendPrompt] Starting with text: "${text.substring(0, 50)}..."`);
     try {
-        // Write text to chat input
-        log(`[sendPrompt] Writing text with sendTextToChat`);
-        await vscode.commands.executeCommand('antigravity.sendTextToChat', true, text);
+        // Try sending text up to 3 times
+        let textSent = false;
+        for (let attempt = 1; attempt <= 3 && !textSent; attempt++) {
+            try {
+                log(`[sendPrompt] Attempt ${attempt}: Writing text with sendTextToChat`);
+                await vscode.commands.executeCommand('antigravity.sendTextToChat', true, text);
+                textSent = true;
+                log(`[sendPrompt] Text written successfully on attempt ${attempt}`);
+            }
+            catch (e) {
+                log(`[sendPrompt] Attempt ${attempt} failed: ${e}`);
+                if (attempt < 3) {
+                    await sleep(500);
+                }
+            }
+        }
+        if (!textSent) {
+            log(`[sendPrompt] FAILED: Could not write text after 3 attempts`);
+            return {
+                success: false,
+                action: 'sendPrompt',
+                error: 'Failed to write text to chat after 3 attempts'
+            };
+        }
         await sleep(400);
         // Focus the chat input
         log(`[sendPrompt] Focusing with agentPanel.focus`);
