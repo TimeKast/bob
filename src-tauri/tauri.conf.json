@@ -46,7 +46,6 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "../scripts/*",
       "resources/bob-helper.vsix",
       "resources/bob-autoclicker.vsix"
     ]

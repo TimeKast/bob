@@ -311,8 +311,8 @@ pub fn start_ws_server(port: u16) -> ExtensionRegistry {
                                         {
                                             let wid = info.window_id.clone();
                                             println!(
-                                                "[WS] Extension registered: {} ({})",
-                                                info.workspace_name, wid
+                                                "[WS] Extension registered: {} (wid: {}, path: {})",
+                                                info.workspace_name, wid, info.workspace_path
                                             );
 
                                             let ext = ConnectedExtension {

@@ -201,25 +201,6 @@
         🚫 Bloqueado: {instance.blockReason || "Requiere atención manual"}
       </div>
     {/if}
-
-    <!-- Test Controls -->
-    <div class="test-controls">
-      <button class="btn-test" onclick={handleDetectUI} disabled={testing}>
-        🔍 Detect UI
-      </button>
-      <button
-        class="btn-test btn-send"
-        onclick={handleDetectAndAct}
-        disabled={testing}
-      >
-        ⚡ Detect & Act
-      </button>
-    </div>
-    {#if testResult}
-      <div class="test-result">
-        {testResult}
-      </div>
-    {/if}
   </div>
 </div>
 

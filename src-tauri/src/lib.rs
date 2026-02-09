@@ -388,64 +388,161 @@ pub struct BacklogResult {
     pub error: Option<String>,
 }
 
-/// Read backlog from project path
+/// Read backlog from project path (pure Rust, cross-platform)
 #[tauri::command]
-fn read_backlog(app: tauri::AppHandle, project_path: String) -> Result<BacklogResult, String> {
-    use tauri::Manager;
+fn read_backlog(_app: tauri::AppHandle, project_path: String) -> Result<BacklogResult, String> {
+    use std::fs;
+    use std::path::Path;
 
-    let script_path = if cfg!(debug_assertions) {
-        // Dev mode: look in project root
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .map(|p| p.join("scripts").join("read-backlog.ps1"))
-            .unwrap_or_else(|| std::path::PathBuf::from("scripts/read-backlog.ps1"))
-    } else {
-        // Production: use Tauri's resource directory
-        app.path()
-            .resource_dir()
-            .map(|p| p.join("scripts").join("read-backlog.ps1"))
-            .unwrap_or_else(|_| {
-                // Fallback: try relative to exe
-                std::env::current_exe()
-                    .ok()
-                    .and_then(|p| {
-                        p.parent()
-                            .map(|p| p.join("scripts").join("read-backlog.ps1"))
-                    })
-                    .unwrap_or_else(|| std::path::PathBuf::from("scripts/read-backlog.ps1"))
-            })
+    let project_path = Path::new(&project_path);
+
+    // Find backlog directory - try multiple patterns
+    let backlog_base = find_backlog_dir(project_path);
+
+    let backlog_base = match backlog_base {
+        Some(p) => p,
+        None => {
+            return Ok(BacklogResult {
+                total_issues: 0,
+                completed_issues: 0,
+                current_issue: String::new(),
+                backlog_path: String::new(),
+                error: Some(format!("No backlog found in {:?}", project_path)),
+            });
+        }
     };
 
-    println!("[read_backlog] Script path: {:?}", script_path);
-    println!("[read_backlog] Project path: {}", project_path);
+    // Find issues directory - check for version folders (v1.0, v2.0) or flat structure
+    let issues_path = find_issues_dir(&backlog_base);
 
-    let output = std::process::Command::new("powershell")
-        .args([
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            script_path.to_str().unwrap_or("scripts/read-backlog.ps1"),
-            "-ProjectPath",
-            &project_path,
-        ])
-        .output()
-        .map_err(|e| format!("Failed to execute PowerShell: {}", e))?;
+    let issues_path = match issues_path {
+        Some(p) => p,
+        None => {
+            return Ok(BacklogResult {
+                total_issues: 0,
+                completed_issues: 0,
+                current_issue: String::new(),
+                backlog_path: backlog_base.to_string_lossy().to_string(),
+                error: Some("No issues directory found".to_string()),
+            });
+        }
+    };
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    println!("[read_backlog] Output: {}", stdout);
+    // Count issues
+    let mut total_issues = 0;
+    let mut completed_issues = 0;
+    let mut first_incomplete: Option<String> = None;
 
-    // Parse JSON output
-    if let Ok(result) = serde_json::from_str::<BacklogResult>(&stdout) {
-        return Ok(result);
+    if let Ok(entries) = fs::read_dir(&issues_path) {
+        let mut files: Vec<_> = entries
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().map(|ext| ext == "md").unwrap_or(false))
+            .collect();
+
+        // Sort by filename
+        files.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+
+        for entry in files {
+            total_issues += 1;
+            let path = entry.path();
+
+            if let Ok(content) = fs::read_to_string(&path) {
+                let is_done = content.contains("Status:")
+                    && (content.to_lowercase().contains("done")
+                        || content.contains("Completado")
+                        || content.contains("Complete")
+                        || content.contains("✅")
+                        || content.contains("Hecho")
+                        || content.contains("Terminado"));
+
+                if is_done {
+                    completed_issues += 1;
+                } else if first_incomplete.is_none() {
+                    // Extract issue ID from filename (e.g., "APP-012.md" -> "APP-012")
+                    if let Some(name) = path.file_stem() {
+                        let name = name.to_string_lossy();
+                        // Match pattern like "ABC-123" at start
+                        let re_match: Vec<&str> = name
+                            .split(|c: char| !c.is_alphanumeric() && c != '-')
+                            .collect();
+                        if !re_match.is_empty() {
+                            first_incomplete = Some(re_match[0].to_string());
+                        }
+                    }
+                }
+            }
+        }
     }
 
     Ok(BacklogResult {
-        total_issues: 0,
-        completed_issues: 0,
-        current_issue: String::new(),
-        backlog_path: String::new(),
-        error: Some(format!("Failed to parse backlog: {}", stdout)),
+        total_issues,
+        completed_issues,
+        current_issue: first_incomplete.unwrap_or_else(|| {
+            if total_issues > 0 && completed_issues == total_issues {
+                "DONE".to_string()
+            } else {
+                String::new()
+            }
+        }),
+        backlog_path: issues_path.to_string_lossy().to_string(),
+        error: None,
     })
+}
+
+/// Find backlog directory - tries multiple patterns
+fn find_backlog_dir(project_path: &std::path::Path) -> Option<std::path::PathBuf> {
+    use std::fs;
+
+    // Pattern 1: docs/backlog (flat)
+    let direct = project_path.join("docs").join("backlog");
+    if direct.exists() {
+        return Some(direct);
+    }
+
+    // Pattern 2: docs/*/backlog (e.g., docs/multiplataforma/backlog)
+    if let Ok(entries) = fs::read_dir(project_path.join("docs")) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            if entry.path().is_dir() {
+                let nested = entry.path().join("backlog");
+                if nested.exists() {
+                    return Some(nested);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Find issues directory - checks for version folders or flat structure
+fn find_issues_dir(backlog_base: &std::path::Path) -> Option<std::path::PathBuf> {
+    use std::fs;
+
+    // Check for version folders (v1.0, v2.0, etc.) - use latest
+    if let Ok(entries) = fs::read_dir(backlog_base) {
+        let mut version_dirs: Vec<_> = entries
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_dir() && e.file_name().to_string_lossy().starts_with('v'))
+            .collect();
+
+        // Sort descending to get latest version
+        version_dirs.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+
+        if let Some(latest) = version_dirs.first() {
+            let issues = latest.path().join("issues");
+            if issues.exists() {
+                return Some(issues);
+            }
+        }
+    }
+
+    // Fallback: issues folder directly in backlog (flat structure)
+    let flat = backlog_base.join("issues");
+    if flat.exists() {
+        return Some(flat);
+    }
+
+    None
 }
 
 /// Write to chat and submit prompt

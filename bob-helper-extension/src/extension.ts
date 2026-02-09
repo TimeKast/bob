@@ -83,6 +83,8 @@ function connect() {
                 workspacePath: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '',
                 windowId: `ext-${Date.now()}`,
             };
+            log(`📍 Sending hello - workspaceName: ${hello.workspaceName}`);
+            log(`📍 Sending hello - workspacePath: ${hello.workspacePath}`);
             send({ type: 'hello', payload: hello as unknown as Record<string, unknown>, id: 'hello' });
 
             // Start state watcher — pushes state changes to BOB
