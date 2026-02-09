@@ -1,10 +1,12 @@
 // BOB - Tauri Backend
-// Commands for window scanning, monitoring, and system integration
+// Cross-platform commands for Silent Mode operation
+// Legacy PowerShell functions removed for macOS compatibility
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::process::Command;
 use tauri::Manager;
+
+// ─── Types ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ScanResult {
@@ -31,138 +33,6 @@ pub struct InstanceStatus {
     pub step_count: u32,
 }
 
-/// Helper function to find script path in multiple locations
-fn get_script_path(script_name: &str) -> PathBuf {
-    if cfg!(debug_assertions) {
-        // Development: use CARGO_MANIFEST_DIR (src-tauri) parent + scripts
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .map(|p| p.join("scripts").join(script_name))
-            .unwrap_or_else(|| PathBuf::from(format!("scripts/{}", script_name)))
-    } else {
-        // Production: check exe directory for scripts
-        let exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.to_path_buf()));
-
-        if let Some(ref dir) = exe_dir {
-            // Try _up_/scripts/ (Tauri NSIS installer location)
-            let up_scripts = dir.join("_up_").join("scripts").join(script_name);
-            if up_scripts.exists() {
-                return up_scripts;
-            }
-
-            // Try direct script file in exe dir
-            let direct = dir.join(script_name);
-            if direct.exists() {
-                return direct;
-            }
-
-            // Try scripts subfolder
-            let scripts = dir.join("scripts").join(script_name);
-            if scripts.exists() {
-                return scripts;
-            }
-        }
-
-        // Fallback to _up_/scripts (most likely for NSIS)
-        exe_dir
-            .map(|d| d.join("_up_").join("scripts").join(script_name))
-            .unwrap_or_else(|| PathBuf::from(script_name))
-    }
-}
-
-/// Scan for VS Code / Antigravity windows using PowerShell
-#[tauri::command]
-fn scan_windows() -> Result<Vec<ScanResult>, String> {
-    let script_path = get_script_path("detect-windows.ps1");
-
-    let output = Command::new("powershell")
-        .args([
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            script_path.to_str().unwrap_or("scripts/detect-windows.ps1"),
-        ])
-        .output()
-        .map_err(|e| format!("Failed to execute PowerShell: {}", e))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!(
-            "PowerShell script failed: {} (path: {:?})",
-            stderr, script_path
-        ));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    // Handle empty output (no windows found)
-    if stdout.trim().is_empty() {
-        return Ok(vec![]);
-    }
-
-    // Handle single object vs array
-    let results: Vec<ScanResult> = if stdout.trim().starts_with('[') {
-        serde_json::from_str(&stdout)
-            .map_err(|e| format!("Failed to parse JSON array: {} - Output: {}", e, stdout))?
-    } else {
-        // Single object, wrap in array
-        let single: ScanResult = serde_json::from_str(&stdout)
-            .map_err(|e| format!("Failed to parse JSON object: {} - Output: {}", e, stdout))?;
-        vec![single]
-    };
-
-    Ok(results)
-}
-
-/// Get the current status of a monitored instance
-#[tauri::command]
-fn get_instance_status(_window_handle: i64) -> Result<InstanceStatus, String> {
-    // TODO: Implement actual status checking
-    Ok(InstanceStatus {
-        status: "idle".to_string(),
-        current_issue: 0,
-        total_issues: 0,
-        retry_count: 0,
-        last_activity: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64,
-        step_count: 0,
-    })
-}
-
-/// Paste a prompt to a specific window
-#[tauri::command]
-fn paste_prompt(window_title: String, prompt: String, instance_id: String) -> Result<(), String> {
-    let script_path = get_script_path("paste-prompt.ps1");
-
-    let output = Command::new("powershell")
-        .args([
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            script_path.to_str().unwrap_or("scripts/paste-prompt.ps1"),
-            "-Prompt",
-            &prompt,
-            "-WindowTitle",
-            &window_title,
-            "-InstanceId",
-            &instance_id,
-        ])
-        .output()
-        .map_err(|e| format!("Failed to execute PowerShell: {}", e))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Failed to paste prompt: {}", stderr));
-    }
-
-    Ok(())
-}
-
-// UI Automation types
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UIStateResult {
     #[serde(rename = "hasAcceptButton")]
@@ -173,7 +43,7 @@ pub struct UIStateResult {
     pub has_retry_button: bool,
     #[serde(rename = "isPaused")]
     pub is_paused: bool,
-    #[serde(rename = "chatButtonColor", default)]
+    #[serde(rename = "chatButtonColor")]
     pub chat_button_color: String,
     #[serde(rename = "acceptButtonX")]
     pub accept_button_x: i32,
@@ -192,189 +62,6 @@ pub struct UIStateResult {
     pub error: Option<String>,
 }
 
-/// Detect UI state (buttons) for a window using PowerShell
-#[tauri::command]
-fn detect_ui_state(window_handle: i64) -> Result<UIStateResult, String> {
-    let script_path = get_script_path("detect-ui-state.ps1");
-
-    println!("[detect_ui_state] Script path: {:?}", script_path);
-    println!("[detect_ui_state] Script exists: {}", script_path.exists());
-    println!("[detect_ui_state] Window handle: {}", window_handle);
-
-    let output = Command::new("powershell")
-        .args([
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            script_path
-                .to_str()
-                .unwrap_or("scripts/detect-ui-state.ps1"),
-            "-WindowHandle",
-            &window_handle.to_string(),
-        ])
-        .output()
-        .map_err(|e| format!("Failed to execute PowerShell: {}", e))?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    println!("[detect_ui_state] stdout: {}", stdout);
-    println!("[detect_ui_state] stderr: {}", stderr);
-    println!("[detect_ui_state] exit code: {:?}", output.status.code());
-
-    // Try to parse JSON from output
-    if let Some(json_match) = stdout.find('{') {
-        let json_str = &stdout[json_match..];
-        if let Some(end) = json_str.rfind('}') {
-            let json = &json_str[..=end];
-            return serde_json::from_str(json)
-                .map_err(|e| format!("Failed to parse JSON: {} - Output: {}", e, json));
-        }
-    }
-
-    // Return default state if parsing failed
-    Ok(UIStateResult {
-        has_accept_button: false,
-        has_enter_button: false,
-        has_retry_button: false,
-        is_paused: false,
-        chat_button_color: String::from("none"),
-        accept_button_x: 0,
-        accept_button_y: 0,
-        enter_button_x: 0,
-        enter_button_y: 0,
-        retry_button_x: 0,
-        retry_button_y: 0,
-        is_bottom_button: false,
-        error: Some(format!("No valid JSON found in output: {}", stdout)),
-    })
-}
-
-/// Click a button at screen coordinates
-#[tauri::command]
-fn click_button(window_handle: i64, screen_x: i32, screen_y: i32) -> Result<bool, String> {
-    let script_path = if cfg!(debug_assertions) {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .map(|p| p.join("scripts").join("click-button.ps1"))
-            .unwrap_or_else(|| std::path::PathBuf::from("scripts/click-button.ps1"))
-    } else {
-        std::env::current_exe()
-            .ok()
-            .and_then(|p| {
-                p.parent()
-                    .map(|p| p.join("scripts").join("click-button.ps1"))
-            })
-            .unwrap_or_else(|| std::path::PathBuf::from("scripts/click-button.ps1"))
-    };
-
-    println!("[click_button] Script path: {:?}", script_path);
-    println!("[click_button] Script exists: {}", script_path.exists());
-    let output = Command::new("powershell")
-        .args([
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            script_path.to_str().unwrap_or("scripts/click-button.ps1"),
-            "-WindowHandle",
-            &window_handle.to_string(),
-            "-ScreenX",
-            &screen_x.to_string(),
-            "-ScreenY",
-            &screen_y.to_string(),
-        ])
-        .output()
-        .map_err(|e| format!("Failed to execute PowerShell: {}", e))?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    println!("[click_button] Clicked at ({}, {})", screen_x, screen_y);
-    println!("[click_button] stdout: {}", stdout);
-    if !stderr.is_empty() {
-        println!("[click_button] stderr: {}", stderr);
-    }
-
-    // Check if success in output
-    Ok(stdout.contains("\"success\":true") || stdout.contains("success\": true"))
-}
-
-/// Accept dialog using Alt+Enter keyboard shortcut
-#[tauri::command]
-fn accept_dialog(window_handle: i64) -> Result<bool, String> {
-    let script_path = if cfg!(debug_assertions) {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .map(|p| p.join("scripts").join("accept-dialog.ps1"))
-            .unwrap_or_else(|| std::path::PathBuf::from("scripts/accept-dialog.ps1"))
-    } else {
-        std::env::current_exe()
-            .ok()
-            .and_then(|p| {
-                p.parent()
-                    .map(|p| p.join("scripts").join("accept-dialog.ps1"))
-            })
-            .unwrap_or_else(|| std::path::PathBuf::from("scripts/accept-dialog.ps1"))
-    };
-
-    println!("[accept_dialog] Script path: {:?}", script_path);
-    println!("[accept_dialog] Window handle: {}", window_handle);
-
-    let output = Command::new("powershell")
-        .args([
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            script_path.to_str().unwrap_or("scripts/accept-dialog.ps1"),
-            "-WindowHandle",
-            &window_handle.to_string(),
-        ])
-        .output()
-        .map_err(|e| format!("Failed to execute PowerShell: {}", e))?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    println!("[accept_dialog] stdout: {}", stdout);
-
-    Ok(stdout.contains("\"success\":true") || stdout.contains("success\": true"))
-}
-
-/// Scroll chat to bottom using Ctrl+End
-#[tauri::command]
-fn scroll_to_bottom(window_handle: i64) -> Result<bool, String> {
-    let script_path = if cfg!(debug_assertions) {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .map(|p| p.join("scripts").join("scroll-to-bottom.ps1"))
-            .unwrap_or_else(|| std::path::PathBuf::from("scripts/scroll-to-bottom.ps1"))
-    } else {
-        std::env::current_exe()
-            .ok()
-            .and_then(|p| {
-                p.parent()
-                    .map(|p| p.join("scripts").join("scroll-to-bottom.ps1"))
-            })
-            .unwrap_or_else(|| std::path::PathBuf::from("scripts/scroll-to-bottom.ps1"))
-    };
-
-    let output = std::process::Command::new("powershell")
-        .args([
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            script_path
-                .to_str()
-                .unwrap_or("scripts/scroll-to-bottom.ps1"),
-            "-WindowHandle",
-            &window_handle.to_string(),
-        ])
-        .output()
-        .map_err(|e| format!("Failed to execute PowerShell: {}", e))?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(stdout.contains("\"success\":true") || stdout.contains("success\": true"))
-}
-
-// Backlog reading result
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BacklogResult {
     #[serde(rename = "totalIssues", default)]
@@ -388,6 +75,89 @@ pub struct BacklogResult {
     pub error: Option<String>,
 }
 
+// ─── Legacy Stubs (for frontend compatibility) ─────────────────────────
+// These return empty/default values since Silent Mode doesn't need them
+
+/// Scan windows - returns empty in Silent Mode (use get_silent_extensions instead)
+#[tauri::command]
+fn scan_windows() -> Result<Vec<ScanResult>, String> {
+    // Legacy mode removed - BOB now uses Silent Mode exclusively
+    // The frontend should use get_silent_extensions for connected instances
+    Ok(vec![])
+}
+
+/// Get instance status - stub for compatibility
+#[tauri::command]
+fn get_instance_status(_window_handle: i64) -> Result<InstanceStatus, String> {
+    Ok(InstanceStatus {
+        status: "idle".to_string(),
+        current_issue: 0,
+        total_issues: 0,
+        retry_count: 0,
+        last_activity: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+        step_count: 0,
+    })
+}
+
+/// Paste prompt - removed, use send_silent_action instead
+#[tauri::command]
+fn paste_prompt(
+    _window_title: String,
+    _prompt: String,
+    _instance_id: String,
+) -> Result<(), String> {
+    Err("Legacy mode removed. Use Silent Mode with send_silent_action.".to_string())
+}
+
+/// Detect UI state - removed, use send_silent_action('getState') instead
+#[tauri::command]
+fn detect_ui_state(_window_handle: i64) -> Result<UIStateResult, String> {
+    Ok(UIStateResult {
+        has_accept_button: false,
+        has_enter_button: false,
+        has_retry_button: false,
+        is_paused: false,
+        chat_button_color: "none".to_string(),
+        accept_button_x: 0,
+        accept_button_y: 0,
+        enter_button_x: 0,
+        enter_button_y: 0,
+        retry_button_x: 0,
+        retry_button_y: 0,
+        is_bottom_button: false,
+        error: Some("Legacy mode removed. Use Silent Mode.".to_string()),
+    })
+}
+
+/// Click button - removed
+#[tauri::command]
+fn click_button(_window_handle: i64, _screen_x: i32, _screen_y: i32) -> Result<bool, String> {
+    Err("Legacy mode removed. Use Silent Mode with send_silent_action.".to_string())
+}
+
+/// Accept dialog - removed
+#[tauri::command]
+fn accept_dialog(_window_handle: i64) -> Result<bool, String> {
+    Err("Legacy mode removed. Use Silent Mode with send_silent_action.".to_string())
+}
+
+/// Scroll to bottom - removed
+#[tauri::command]
+fn scroll_to_bottom(_window_handle: i64) -> Result<bool, String> {
+    Err("Legacy mode removed. Use Silent Mode with send_silent_action.".to_string())
+}
+
+/// Write to chat - removed
+#[tauri::command]
+fn write_to_chat(_window_handle: i64, _prompt: String) -> Result<bool, String> {
+    Err("Legacy mode removed. Use Silent Mode with send_silent_action.".to_string())
+}
+
+// ─── Cross-Platform Functions ──────────────────────────────────────────
+
 /// Read backlog from project path (pure Rust, cross-platform)
 #[tauri::command]
 fn read_backlog(_app: tauri::AppHandle, project_path: String) -> Result<BacklogResult, String> {
@@ -396,7 +166,7 @@ fn read_backlog(_app: tauri::AppHandle, project_path: String) -> Result<BacklogR
 
     let project_path = Path::new(&project_path);
 
-    // Find backlog directory - try multiple patterns
+    // Find backlog directory
     let backlog_base = find_backlog_dir(project_path);
 
     let backlog_base = match backlog_base {
@@ -412,7 +182,7 @@ fn read_backlog(_app: tauri::AppHandle, project_path: String) -> Result<BacklogR
         }
     };
 
-    // Find issues directory - check for version folders (v1.0, v2.0) or flat structure
+    // Find issues directory
     let issues_path = find_issues_dir(&backlog_base);
 
     let issues_path = match issues_path {
@@ -439,7 +209,6 @@ fn read_backlog(_app: tauri::AppHandle, project_path: String) -> Result<BacklogR
             .filter(|e| e.path().extension().map(|ext| ext == "md").unwrap_or(false))
             .collect();
 
-        // Sort by filename
         files.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
 
         for entry in files {
@@ -458,10 +227,8 @@ fn read_backlog(_app: tauri::AppHandle, project_path: String) -> Result<BacklogR
                 if is_done {
                     completed_issues += 1;
                 } else if first_incomplete.is_none() {
-                    // Extract issue ID from filename (e.g., "APP-012.md" -> "APP-012")
                     if let Some(name) = path.file_stem() {
                         let name = name.to_string_lossy();
-                        // Match pattern like "ABC-123" at start
                         let re_match: Vec<&str> = name
                             .split(|c: char| !c.is_alphanumeric() && c != '-')
                             .collect();
@@ -499,7 +266,7 @@ fn find_backlog_dir(project_path: &std::path::Path) -> Option<std::path::PathBuf
         return Some(direct);
     }
 
-    // Pattern 2: docs/*/backlog (e.g., docs/multiplataforma/backlog)
+    // Pattern 2: docs/*/backlog (nested)
     if let Ok(entries) = fs::read_dir(project_path.join("docs")) {
         for entry in entries.filter_map(|e| e.ok()) {
             if entry.path().is_dir() {
@@ -518,14 +285,13 @@ fn find_backlog_dir(project_path: &std::path::Path) -> Option<std::path::PathBuf
 fn find_issues_dir(backlog_base: &std::path::Path) -> Option<std::path::PathBuf> {
     use std::fs;
 
-    // Check for version folders (v1.0, v2.0, etc.) - use latest
+    // Check for version folders (v1.0, v2.0, etc.)
     if let Ok(entries) = fs::read_dir(backlog_base) {
         let mut version_dirs: Vec<_> = entries
             .filter_map(|e| e.ok())
             .filter(|e| e.path().is_dir() && e.file_name().to_string_lossy().starts_with('v'))
             .collect();
 
-        // Sort descending to get latest version
         version_dirs.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
 
         if let Some(latest) = version_dirs.first() {
@@ -536,7 +302,7 @@ fn find_issues_dir(backlog_base: &std::path::Path) -> Option<std::path::PathBuf>
         }
     }
 
-    // Fallback: issues folder directly in backlog (flat structure)
+    // Fallback: issues folder directly in backlog
     let flat = backlog_base.join("issues");
     if flat.exists() {
         return Some(flat);
@@ -545,72 +311,15 @@ fn find_issues_dir(backlog_base: &std::path::Path) -> Option<std::path::PathBuf>
     None
 }
 
-/// Write to chat and submit prompt
-#[tauri::command]
-fn write_to_chat(window_handle: i64, prompt: String) -> Result<bool, String> {
-    let script_path = if cfg!(debug_assertions) {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .map(|p| p.join("scripts").join("write-to-chat.ps1"))
-            .unwrap_or_else(|| std::path::PathBuf::from("scripts/write-to-chat.ps1"))
-    } else {
-        std::env::current_exe()
-            .ok()
-            .and_then(|p| {
-                p.parent()
-                    .map(|p| p.join("scripts").join("write-to-chat.ps1"))
-            })
-            .unwrap_or_else(|| std::path::PathBuf::from("scripts/write-to-chat.ps1"))
-    };
-
-    println!("[write_to_chat] Script path: {:?}", script_path);
-    println!(
-        "[write_to_chat] Window handle: {}, Prompt: {}",
-        window_handle, prompt
-    );
-
-    let output = Command::new("powershell")
-        .args([
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            script_path.to_str().unwrap_or("scripts/write-to-chat.ps1"),
-            "-WindowHandle",
-            &window_handle.to_string(),
-            "-Prompt",
-            &prompt,
-        ])
-        .output()
-        .map_err(|e| format!("Failed to execute PowerShell: {}", e))?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    println!("[write_to_chat] stdout: {}", stdout);
-    println!("[write_to_chat] stderr: {}", stderr);
-    println!("[write_to_chat] exit code: {:?}", output.status.code());
-
-    // Check if success in output
-    let success = stdout.contains("\"success\":true") || stdout.contains("success\": true");
-    println!("[write_to_chat] success: {}", success);
-
-    Ok(success)
-}
-
 /// Send a notification to Discord webhook
 #[tauri::command]
 async fn notify_discord(webhook_url: String, title: String, message: String) -> Result<(), String> {
     let client = reqwest::Client::new();
-
     let payload = serde_json::json!({
         "embeds": [{
             "title": title,
             "description": message,
-            "color": 5814783, // Cyan color
-            "footer": {
-                "text": "BOB Monitor"
-            },
-            "timestamp": chrono::Utc::now().to_rfc3339()
+            "color": 0x00ff88
         }]
     });
 
@@ -627,44 +336,31 @@ async fn notify_discord(webhook_url: String, title: String, message: String) -> 
 /// Write a log entry to file
 #[tauri::command]
 fn write_log(log_path: String, level: String, message: String) -> Result<(), String> {
-    use std::fs::{create_dir_all, OpenOptions};
+    use std::fs::OpenOptions;
     use std::io::Write;
 
-    // Use provided path or default to exe directory
-    let path = if log_path.is_empty() {
-        std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.join("bob.log")))
-            .unwrap_or_else(|| PathBuf::from("bob.log"))
-    } else {
-        PathBuf::from(&log_path)
-    };
+    let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+    let log_line = format!("[{}] [{}] {}\n", timestamp, level, message);
 
-    // Create parent directory if it doesn't exist
+    let path = std::path::Path::new(&log_path);
     if let Some(parent) = path.parent() {
-        if !parent.exists() {
-            create_dir_all(parent).map_err(|e| format!("Failed to create log directory: {}", e))?;
-        }
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create log directory: {}", e))?;
     }
 
-    // Get current timestamp
-    let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
-
-    // Format log entry
-    let log_entry = format!("[{}] [{}] {}\n", timestamp, level.to_uppercase(), message);
-
-    // Append to file
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
-        .open(&path)
+        .open(&log_path)
         .map_err(|e| format!("Failed to open log file: {}", e))?;
 
-    file.write_all(log_entry.as_bytes())
-        .map_err(|e| format!("Failed to write to log file: {}", e))?;
+    file.write_all(log_line.as_bytes())
+        .map_err(|e| format!("Failed to write to log: {}", e))?;
 
     Ok(())
 }
+
+// ─── Silent Mode / WebSocket Functions ─────────────────────────────────
 
 mod ws_server;
 
@@ -699,100 +395,80 @@ async fn send_silent_action(
     let msg = ws_server::WsMessage {
         msg_type: action,
         payload: payload.unwrap_or(serde_json::Value::Null),
-        id: format!("bob-{}", chrono::Utc::now().timestamp_millis()),
+        id: format!(
+            "action-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis()
+        ),
     };
     ws_server::send_to_extension(&state, &window_id, msg).await?;
     Ok(true)
 }
 
-/// Simulate Enter key press (cross-platform keyboard simulation)
+/// Simulate Enter key press (cross-platform)
 #[tauri::command]
-async fn simulate_enter() -> Result<bool, String> {
-    use tauri_plugin_user_input::UserInputExt;
+fn simulate_enter() -> Result<bool, String> {
+    use enigo::{Direction, Enigo, Key, Keyboard, Settings};
 
-    // Small delay to ensure window is focused
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    let mut enigo =
+        Enigo::new(&Settings::default()).map_err(|e| format!("Failed to create Enigo: {}", e))?;
 
-    // Simulate Enter key press
-    // Note: On first run, macOS will prompt for Accessibility permissions
-    println!("[simulate_enter] Simulating Enter key press");
+    // Alt+Enter for Antigravity send
+    enigo
+        .key(Key::Alt, Direction::Press)
+        .map_err(|e| format!("Failed to press Alt: {}", e))?;
+    enigo
+        .key(Key::Return, Direction::Click)
+        .map_err(|e| format!("Failed to press Enter: {}", e))?;
+    enigo
+        .key(Key::Alt, Direction::Release)
+        .map_err(|e| format!("Failed to release Alt: {}", e))?;
 
-    // The plugin uses platform-native methods
-    // For now, use a simple approach with the key function
     Ok(true)
 }
 
-// ─── Extension Installation Commands ─────────────────────────────────
+// ─── Extension Installation ────────────────────────────────────────────
 
 /// Get the path to the bundled extension
 fn get_extension_path() -> PathBuf {
     if cfg!(debug_assertions) {
-        // Dev: look in src-tauri/resources
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("resources")
             .join("bob-helper.vsix")
     } else {
-        // Prod: look relative to exe
-        let exe_dir = std::env::current_exe()
+        std::env::current_exe()
             .ok()
-            .and_then(|p| p.parent().map(|d| d.to_path_buf()));
-
-        if let Some(ref dir) = exe_dir {
-            // Try _up_/resources (NSIS)
-            let up_res = dir.join("_up_").join("resources").join("bob-helper.vsix");
-            if up_res.exists() {
-                return up_res;
-            }
-            // Try direct
-            let direct = dir.join("bob-helper.vsix");
-            if direct.exists() {
-                return direct;
-            }
-            // Try resources subfolder
-            let res = dir.join("resources").join("bob-helper.vsix");
-            if res.exists() {
-                return res;
-            }
-        }
-
-        exe_dir
-            .map(|d| d.join("_up_").join("resources").join("bob-helper.vsix"))
-            .unwrap_or_else(|| PathBuf::from("bob-helper.vsix"))
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            .map(|d| d.join("resources").join("bob-helper.vsix"))
+            .unwrap_or_else(|| PathBuf::from("resources/bob-helper.vsix"))
     }
 }
 
-/// Check if the BOB Helper extension is installed in Antigravity/VS Code
+/// Check if the BOB Helper extension is installed
 #[tauri::command]
 fn check_extension_installed() -> Result<bool, String> {
-    // Try antigravity CLI first
-    let antigravity_result = Command::new("antigravity")
-        .args(["--list-extensions"])
-        .output();
+    // Check for antigravity CLI first, then fall back to code
+    let tools = ["antigravity", "code"];
 
-    if let Ok(output) = antigravity_result {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        if stdout.contains("bob-helper") || stdout.contains("timekast.bob-helper") {
-            println!("[check_extension] BOB Helper found in Antigravity");
-            return Ok(true);
+    for tool in &tools {
+        let output = std::process::Command::new(tool)
+            .args(["--list-extensions"])
+            .output();
+
+        if let Ok(output) = output {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if stdout.contains("bob-helper") {
+                return Ok(true);
+            }
         }
     }
 
-    // Fallback to VS Code
-    let code_result = Command::new("code").args(["--list-extensions"]).output();
-
-    if let Ok(output) = code_result {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        if stdout.contains("bob-helper") || stdout.contains("timekast.bob-helper") {
-            println!("[check_extension] BOB Helper found in VS Code");
-            return Ok(true);
-        }
-    }
-
-    println!("[check_extension] BOB Helper NOT installed");
     Ok(false)
 }
 
-/// Install the BOB Helper extension from bundled resources
+/// Install the BOB Helper extension
 #[tauri::command]
 fn install_extension() -> Result<bool, String> {
     let vsix_path = get_extension_path();
@@ -801,38 +477,25 @@ fn install_extension() -> Result<bool, String> {
         return Err(format!("Extension file not found at {:?}", vsix_path));
     }
 
-    let vsix_str = vsix_path.to_str().ok_or("Invalid path")?;
-    println!("[install_extension] Installing from: {}", vsix_str);
+    // Try antigravity first, then code
+    let tools = ["antigravity", "code"];
 
-    // Try antigravity first
-    let antigravity_result = Command::new("antigravity")
-        .args(["--install-extension", vsix_str])
-        .output();
+    for tool in &tools {
+        let result = std::process::Command::new(tool)
+            .args(["--install-extension", vsix_path.to_str().unwrap_or("")])
+            .output();
 
-    if let Ok(output) = antigravity_result {
-        if output.status.success() {
-            println!("[install_extension] Installed via Antigravity");
-            return Ok(true);
+        if let Ok(output) = result {
+            if output.status.success() {
+                return Ok(true);
+            }
         }
     }
 
-    // Fallback to VS Code
-    let code_result = Command::new("code")
-        .args(["--install-extension", vsix_str])
-        .output();
-
-    if let Ok(output) = code_result {
-        if output.status.success() {
-            println!("[install_extension] Installed via VS Code");
-            return Ok(true);
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("VS Code install failed: {}", stderr));
-        }
-    }
-
-    Err("Could not install extension - neither antigravity nor code CLI found".to_string())
+    Err("Failed to install extension. Make sure Antigravity or VS Code is in PATH.".to_string())
 }
+
+// ─── App Entry Point ───────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -844,23 +507,28 @@ pub fn run() {
             let registry = ws_server::start_ws_server(9876);
             app.manage(registry);
             println!("[BOB] WebSocket server started on ws://localhost:9876");
+            println!("[BOB] Running in Silent Mode only (cross-platform)");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            // Legacy stubs (for frontend compatibility)
             scan_windows,
             get_instance_status,
             paste_prompt,
-            notify_discord,
             detect_ui_state,
             click_button,
             accept_dialog,
             scroll_to_bottom,
-            read_backlog,
             write_to_chat,
+            // Cross-platform functions
+            read_backlog,
             write_log,
+            notify_discord,
+            // Silent Mode
             get_silent_extensions,
             send_silent_action,
             simulate_enter,
+            // Extension management
             check_extension_installed,
             install_extension
         ])
