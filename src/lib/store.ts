@@ -3,7 +3,7 @@
 import { writable, get } from 'svelte/store';
 import type { Instance, Settings } from './types';
 import { invoke } from '@tauri-apps/api/core';
-import { getSilentExtensions, matchExtensionToInstance, acceptAllSilent, acceptStepSilent, acceptTerminalSilent, sendPromptSilent, retrySilent, type SilentExtension } from './websocket';
+import { getSilentExtensions, matchExtensionToInstance, acceptAllSilent, acceptStepSilent, acceptTerminalSilent, sendPromptSilent, retrySilent, getStateSilent, type SilentExtension } from './websocket';
 
 // Default settings
 const defaultSettings: Settings = {
@@ -16,7 +16,7 @@ const defaultSettings: Settings = {
     minimizeToTray: true,
     // Auto-implementation settings
     autoPrompt: 'Continúa con el siguiente paso del issue actual. Si no hay issue en progreso, ejecuta /implement con el siguiente issue P0/P1 del backlog. Si todos los issues están completados, responde exactamente: "✅ BACKLOG COMPLETADO".',
-    pollIntervalSeconds: 20,  // Poll every 20 seconds
+    pollIntervalSeconds: 5,  // Poll every 5 seconds (fast with WebSocket)
     stopConditions: [
         '🛑 STOP',
         '❌',
@@ -709,7 +709,7 @@ async function pollOnce(): Promise<void> {
         // Update backlog for this instance on every poll (with timeout)
         try {
             const backlogTimeout = new Promise<null>((_, reject) =>
-                setTimeout(() => reject(new Error('Backlog timeout')), 20000)
+                setTimeout(() => reject(new Error('Backlog timeout')), 5000)
             );
             
             const backlogPromise = invoke<{
@@ -783,9 +783,8 @@ async function pollOnce(): Promise<void> {
         // If companion extension is connected, use WebSocket instead of pixel scanning
         if (instance.connectionMode === 'silent' && instance.silentWindowId) {
             try {
-                const extensions = await getSilentExtensions();
-                const ext = extensions.find(e => e.windowId === instance.silentWindowId);
-                const silentState = ext?.state;
+                // Request FRESH state from extension (not cached)
+                const silentState = await getStateSilent(instance.silentWindowId);
 
                 if (!silentState) {
                     console.log(`[${instance.projectName}] 🔇 Silent: no state yet, waiting...`);

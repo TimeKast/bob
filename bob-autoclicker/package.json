@@ -1,0 +1,53 @@
+{
+    "name": "bob-autoclicker",
+    "displayName": "BOB Auto Clicker",
+    "description": "Auto-accepts Antigravity changes",
+    "version": "0.4.0",
+    "publisher": "timekast",
+    "engines": {
+        "vscode": "^1.85.0"
+    },
+    "categories": ["Other"],
+    "activationEvents": ["onStartupFinished"],
+    "main": "./out/extension.js",
+    "contributes": {
+        "commands": [
+            {
+                "command": "bobAutoclicker.showMenu",
+                "title": "BOB Auto Clicker: Settings"
+            }
+        ],
+        "configuration": {
+            "title": "BOB Auto Clicker",
+            "properties": {
+                "bobAutoclicker.enableAccept": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Auto-accept steps and terminal commands"
+                },
+                "bobAutoclicker.enableAcceptAll": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Auto-accept all file changes"
+                },
+                "bobAutoclicker.intervalSeconds": {
+                    "type": "number",
+                    "default": 10,
+                    "minimum": 1,
+                    "maximum": 60,
+                    "description": "Seconds between accept attempts"
+                }
+            }
+        }
+    },
+    "scripts": {
+        "vscode:prepublish": "npm run compile",
+        "compile": "tsc -p ./",
+        "watch": "tsc -watch -p ./"
+    },
+    "devDependencies": {
+        "@types/vscode": "^1.85.0",
+        "@types/node": "^18.0.0",
+        "typescript": "^5.0.0"
+    }
+}

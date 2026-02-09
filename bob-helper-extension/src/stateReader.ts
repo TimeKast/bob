@@ -5,56 +5,30 @@ import * as vscode from 'vscode';
 import type { AntigravityState } from './protocol';
 import { log } from './logger';
 
-// Track last state to only log changes
-let lastStateJson = '';
+// Agent working detection via lastStepIndex from getDiagnostics
+let lastStepIndex = -1;
+let stepIndexStableCount = 0;
+let lastAgentWorking: boolean | null = null; // null = first run
+const STABLE_POLLS_FOR_IDLE = 6;
 
-/**
- * Reads the current state of Antigravity by querying VS Code's `when` context values.
- * These contexts are set internally by the Antigravity extension and indicate
- * what actions are available (accept, retry, terminal approval, etc.)
- */
 export async function readAntigravityState(): Promise<AntigravityState> {
-    const [
-        canAcceptOrReject,
-        canAcceptAllEdits,
-        canAcceptHunk,
-        canTriggerTerminal,
-        isAgentInputFocused,
-        canRetry,
-        agentHasError,
-    ] = await Promise.all([
-        getContext<boolean>('antigravity.canAcceptOrRejectCommand'),
-        getContext<boolean>('antigravity.canAcceptOrRejectAllAgentEditsInFile'),
-        getContext<boolean>('antigravity.canAcceptOrRejectFocusedHunk'),
-        getContext<boolean>('antigravity.canTriggerTerminalCommandAction'),
-        getContext<boolean>('antigravity.isAgentModeInputBoxFocused'),
-        getContext<boolean>('antigravity.canRetry'),
-        getContext<boolean>('antigravity.agentHasError'),
-    ]);
-
-    // Determine high-level state
-    const hasAcceptButton = canAcceptOrReject === true || canAcceptAllEdits === true || canAcceptHunk === true;
-    const terminalPending = canTriggerTerminal === true;
-
-    // Agent is "working" ONLY if we explicitly know input is NOT focused
-    // If isAgentInputFocused is undefined, assume chat is ready (not working)
-    // This is safer - we'd rather try to send a prompt than miss opportunities
-    const agentWorking = !hasAcceptButton && !terminalPending && isAgentInputFocused === false;
-
-    // Chat is ready = not working, no pending accepts/terminal
-    const hasEnterButton = !agentWorking && !hasAcceptButton && !terminalPending;
-    
-    // Retry button appears after errors
-    const hasRetryButton = canRetry === true || agentHasError === true;
-
-    const currentStateJson = `${hasAcceptButton}-${hasEnterButton}-${agentWorking}-${terminalPending}-${hasRetryButton}`;
-    if (currentStateJson !== lastStateJson) {
-        log(`[StateReader] State changed: hasAccept=${hasAcceptButton}, hasEnter=${hasEnterButton}, working=${agentWorking}, terminal=${terminalPending}, hasRetry=${hasRetryButton}`);
-        lastStateJson = currentStateJson;
-    }
-
-    // Get workspace name
     const workspaceName = vscode.workspace.workspaceFolders?.[0]?.name || 'unknown';
+    
+    // Get agent working state from getDiagnostics
+    const { agentWorking, currentStepIndex } = await checkAgentWorkingState();
+    
+    // hasEnter = agent is idle (ready for input)
+    const hasEnterButton = !agentWorking;
+    
+    // Log only on state changes (or first run)
+    if (lastAgentWorking === null || agentWorking !== lastAgentWorking) {
+        log(agentWorking ? `⏳ Agent WORKING (step ${currentStepIndex})` : `✅ Agent IDLE (step ${currentStepIndex})`);
+        lastAgentWorking = agentWorking;
+    }
+    
+    const hasAcceptButton = false;
+    const terminalPending = false;
+    const hasRetryButton = false;
 
     return {
         hasAcceptButton,
@@ -67,22 +41,54 @@ export async function readAntigravityState(): Promise<AntigravityState> {
 }
 
 /**
- * Helper to safely read a VS Code context value.
- * Uses executeCommand('getContext', key) which is available in VS Code 1.93+
+ * Check if agent is working by comparing lastStepIndex from getDiagnostics
  */
-async function getContext<T>(key: string): Promise<T | undefined> {
+async function checkAgentWorkingState(): Promise<{ agentWorking: boolean; currentStepIndex: number }> {
     try {
-        return await vscode.commands.executeCommand<T>('getContext', key);
-    } catch {
-        // Context not available or command failed
-        return undefined;
+        const result = await vscode.commands.executeCommand('antigravity.getDiagnostics') as string;
+        
+        if (!result || typeof result !== 'string') {
+            return { agentWorking: false, currentStepIndex: -1 };
+        }
+        
+        // getDiagnostics returns a JSON string, parse it
+        const diagnostics = JSON.parse(result);
+        
+        // Try recentTrajectories
+        if (diagnostics.recentTrajectories?.length) {
+            const activeTrajectory = diagnostics.recentTrajectories[0];
+            const currentStepIndex = activeTrajectory.lastStepIndex || 0;
+            
+            if (lastStepIndex === -1) {
+                log(`[DEBUG] Got step ${currentStepIndex} from: ${activeTrajectory.summary}`);
+                lastStepIndex = currentStepIndex;
+                stepIndexStableCount = 0;
+                return { agentWorking: false, currentStepIndex };
+            }
+            
+            if (currentStepIndex !== lastStepIndex) {
+                lastStepIndex = currentStepIndex;
+                stepIndexStableCount = 0;
+                return { agentWorking: true, currentStepIndex };
+            } else {
+                stepIndexStableCount++;
+                return { 
+                    agentWorking: stepIndexStableCount < STABLE_POLLS_FOR_IDLE, 
+                    currentStepIndex 
+                };
+            }
+        }
+        
+        // No recentTrajectories - return idle
+        return { agentWorking: false, currentStepIndex: -1 };
+    } catch (e) {
+        log(`[DEBUG] Error: ${e}`);
+        return { agentWorking: false, currentStepIndex: -1 };
     }
 }
 
 /**
  * Sets up watchers to detect state changes and invoke callback.
- * Since VS Code doesn't have a direct "onContextChanged" event,
- * we poll at a short interval when BOB is connected.
  */
 export class StateWatcher {
     private interval: NodeJS.Timeout | null = null;
@@ -93,7 +99,7 @@ export class StateWatcher {
         this.onChange = onChange;
     }
 
-    start(pollMs: number = 1000): void {
+    start(pollMs: number = 10000): void {
         if (this.interval) { return; }
 
         this.interval = setInterval(async () => {

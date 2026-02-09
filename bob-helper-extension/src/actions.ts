@@ -81,36 +81,8 @@ export async function sendPrompt(text: string): Promise<ActionResult> {
     log(`[sendPrompt] Starting with text: "${text.substring(0, 50)}..."`);
     
     try {
-        // Step 1: Try direct message send commands first (no need for focus)
-        log(`[sendPrompt] Trying direct send commands...`);
-        
-        const directCommands = [
-            'antigravity.sendUserMessage',
-            'antigravity.chat.send',
-            'antigravity.agent.sendMessage',
-            'workbench.action.chat.send',
-        ];
-        
-        let directSendWorked = false;
-        for (const cmd of directCommands) {
-            try {
-                log(`[sendPrompt] Trying: ${cmd}`);
-                await vscode.commands.executeCommand(cmd, text);
-                log(`[sendPrompt] ${cmd} executed without error!`);
-                directSendWorked = true;
-                break;
-            } catch (e) {
-                log(`[sendPrompt] ${cmd} failed: ${e}`);
-            }
-        }
-        
-        if (directSendWorked) {
-            log(`[sendPrompt] SUCCESS via direct command`);
-            return { success: true, action: 'sendPrompt' };
-        }
-        
-        // Fallback: Write text then try to submit
-        log(`[sendPrompt] Fallback: Writing text with sendTextToChat`);
+        // Write text to chat input
+        log(`[sendPrompt] Writing text with sendTextToChat`);
         await vscode.commands.executeCommand('antigravity.sendTextToChat', true, text);
         await sleep(400);
         
@@ -119,8 +91,7 @@ export async function sendPrompt(text: string): Promise<ActionResult> {
         await vscode.commands.executeCommand('antigravity.agentPanel.focus');
         await sleep(200);
         
-        // Ask BOB to simulate Alt+Enter
-        // Include workspace name so BOB can find the correct window
+        // Ask BOB to simulate Alt+Enter to submit
         const workspaceName = vscode.workspace.workspaceFolders?.[0]?.name || '';
         log(`[sendPrompt] Sending simulateEnter to BOB (workspace: ${workspaceName})`);
         send({
@@ -129,7 +100,7 @@ export async function sendPrompt(text: string): Promise<ActionResult> {
             id: `enter-${Date.now()}`
         });
         
-        log(`[sendPrompt] Fallback complete`);
+        log(`[sendPrompt] Complete!`);
         return { success: true, action: 'sendPrompt' };
     } catch (e) {
         log(`[sendPrompt] FAILED: ${e}`);

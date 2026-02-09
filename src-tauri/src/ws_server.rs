@@ -67,7 +67,6 @@ pub type ExtensionRegistry = Arc<RwLock<HashMap<String, ConnectedExtension>>>;
 /// Focus the Antigravity window containing the given workspace name (Windows only)
 #[cfg(target_os = "windows")]
 fn focus_antigravity_window(workspace_name: &str) -> Result<(), String> {
-    use std::ptr::null_mut;
     use std::sync::Mutex;
 
     // Windows API bindings
@@ -151,8 +150,6 @@ fn focus_antigravity_window(workspace_name: &str) -> Result<(), String> {
         workspace_name
     );
 
-    // AppleScript to find and activate Antigravity window
-    // First tries to find by workspace name, then falls back to "Antigravity"
     let script = format!(
         r#"
         tell application "System Events"
@@ -205,7 +202,6 @@ fn focus_antigravity_window(workspace_name: &str) -> Result<(), String> {
 
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn focus_antigravity_window(_workspace_name: &str) -> Result<(), String> {
-    // On Linux/other, just wait and hope the window is focused
     println!("[focus_window] Linux: No implementation, waiting...");
     std::thread::sleep(std::time::Duration::from_millis(200));
     Ok(())
@@ -226,28 +222,22 @@ fn simulate_enter_key(workspace_name: &str) -> Result<(), String> {
             "[simulate_enter_key] Warning: Could not focus window: {}",
             e
         );
-        // Continue anyway, might still work
     }
 
-    // Create enigo instance with default settings
     let mut enigo = Enigo::new(&Settings::default())
         .map_err(|e| format!("Failed to create Enigo instance: {:?}", e))?;
 
-    // Simulate Alt+Enter (Antigravity's submit shortcut)
-    // Press Alt
+    // Simulate Alt+Enter
     enigo
         .key(Key::Alt, Direction::Press)
         .map_err(|e| format!("Failed to press Alt: {:?}", e))?;
 
-    // Small delay between keys
     std::thread::sleep(std::time::Duration::from_millis(50));
 
-    // Press and release Enter while Alt is held
     enigo
         .key(Key::Return, Direction::Click)
         .map_err(|e| format!("Failed to simulate Enter key: {:?}", e))?;
 
-    // Release Alt
     std::thread::sleep(std::time::Duration::from_millis(50));
     enigo
         .key(Key::Alt, Direction::Release)
@@ -343,9 +333,30 @@ pub fn start_ws_server(port: u16) -> ExtensionRegistry {
                                             }
                                         }
                                     }
-                                    "state" | "result" | "error" | "pong" => {
-                                        // Responses from extension — store for pending request
-                                        // The frontend polls these via Tauri commands
+                                    "state" => {
+                                        // Response from getState — update cached state
+                                        if let Some(wid) = &window_id {
+                                            println!(
+                                                "[WS] [{}] State response received (id: {})",
+                                                wid, ws_msg.id
+                                            );
+                                            // Parse and cache the state
+                                            if let Ok(state) = serde_json::from_value::<AntigravityState>(
+                                                ws_msg.payload.clone(),
+                                            ) {
+                                                println!(
+                                                    "[WS] [{}] State: accept={}, retry={}, enter={}, working={}, terminal={}",
+                                                    wid, state.has_accept_button, state.has_retry_button, 
+                                                    state.has_enter_button, state.agent_working, state.terminal_pending
+                                                );
+                                                if let Some(ext) = registry.write().await.get_mut(wid) {
+                                                    ext.last_state = Some(state);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    "result" | "error" | "pong" => {
+                                        // Other responses from extension — just log
                                         if let Some(wid) = &window_id {
                                             println!(
                                                 "[WS] [{}] Response: {} (id: {})",
@@ -355,7 +366,6 @@ pub fn start_ws_server(port: u16) -> ExtensionRegistry {
                                     }
                                     "simulateEnter" => {
                                         // Request to simulate Enter key press
-                                        // Extract workspace name from payload
                                         let workspace_name = ws_msg
                                             .payload
                                             .get("workspaceName")
@@ -378,6 +388,7 @@ pub fn start_ws_server(port: u16) -> ExtensionRegistry {
                                             ),
                                         }
                                     }
+
                                     _ => {
                                         println!("[WS] Unknown message type: {}", ws_msg.msg_type);
                                     }

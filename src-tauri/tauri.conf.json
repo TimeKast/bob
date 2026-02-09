@@ -47,7 +47,8 @@
     ],
     "resources": [
       "../scripts/*",
-      "resources/bob-helper.vsix"
+      "resources/bob-helper.vsix",
+      "resources/bob-autoclicker.vsix"
     ]
   }
 }

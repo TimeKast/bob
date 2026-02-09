@@ -219,7 +219,7 @@ function startStateWatcher() {
             id: `push-${Date.now()}`,
         });
     });
-    stateWatcher.start(1000); // Poll every 1s for state changes
+    stateWatcher.start(10000); // Poll every 10s for state changes
     log('State watcher started');
 }
 

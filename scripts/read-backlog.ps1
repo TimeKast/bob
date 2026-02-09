@@ -45,14 +45,17 @@ try {
     
     # Find first version folder (v1.0, v2.0, etc.)
     $versionDirs = Get-ChildItem -Path $backlogBase -Directory | Where-Object { $_.Name -match "^v\d" } | Sort-Object Name -Descending
-    if ($versionDirs.Count -eq 0) {
-        $result.error = "No version directories found in backlog"
-        $result | ConvertTo-Json -Compress
-        exit
+    
+    if ($versionDirs.Count -gt 0) {
+        # Use latest version folder
+        $latestVersion = $versionDirs[0]
+        $issuesPath = Join-Path $latestVersion.FullName "issues"
+    }
+    else {
+        # Fallback: check for issues folder directly in backlog (flat structure)
+        $issuesPath = Join-Path $backlogBase "issues"
     }
     
-    $latestVersion = $versionDirs[0]
-    $issuesPath = Join-Path $latestVersion.FullName "issues"
     $result.backlogPath = $issuesPath
     
     if (-not (Test-Path $issuesPath)) {

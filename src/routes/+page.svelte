@@ -42,6 +42,15 @@
       extensionStatus = "checking";
       const installed = await invoke<boolean>("check_extension_installed");
       extensionStatus = installed ? "installed" : "missing";
+
+      // If CLI check fails but instances appear later, mark as installed
+      if (extensionStatus === "missing") {
+        setTimeout(() => {
+          if ($instances.length > 0) {
+            extensionStatus = "installed";
+          }
+        }, 5000);
+      }
     } catch (e) {
       console.error("Failed to check extension:", e);
       extensionStatus = "missing";
