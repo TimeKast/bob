@@ -45,6 +45,7 @@ export interface AntigravityState {
   agentWorking: boolean;       // Agent is currently processing
   terminalPending: boolean;    // Terminal command awaiting approval
   workspaceName: string;       // Current workspace/project name
+  workspacePath: string;       // Full path to workspace root
 }
 
 // ─── Handshake ──────────────────────────────────────────────────────
@@ -52,6 +53,7 @@ export interface AntigravityState {
 export interface HelloPayload {
   extensionVersion: string;
   workspaceName: string;
+  workspacePath: string;       // Full path to workspace root
   windowId: string;            // Unique identifier for this Antigravity window
 }
 

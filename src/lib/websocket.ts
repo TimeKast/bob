@@ -9,6 +9,7 @@ import type { Instance } from './types';
 export interface SilentExtension {
     windowId: string;
     workspaceName: string;
+    workspacePath: string;  // Full path to workspace root
     state: SilentState | null;
 }
 
@@ -19,6 +20,7 @@ export interface SilentState {
     agentWorking: boolean;
     terminalPending: boolean;
     workspaceName: string;
+    workspacePath: string;  // Full path to workspace root
 }
 
 // ─── Extension Discovery ───────────────────────────────────────────

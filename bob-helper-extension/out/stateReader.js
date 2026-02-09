@@ -46,6 +46,7 @@ let lastAgentWorking = null; // null = first run
 const STABLE_POLLS_FOR_IDLE = 6;
 async function readAntigravityState() {
     const workspaceName = vscode.workspace.workspaceFolders?.[0]?.name || 'unknown';
+    const workspacePath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
     // Get agent working state from getDiagnostics
     const { agentWorking, currentStepIndex } = await checkAgentWorkingState();
     // hasEnter = agent is idle (ready for input)
@@ -65,6 +66,7 @@ async function readAntigravityState() {
         agentWorking,
         terminalPending,
         workspaceName,
+        workspacePath,
     };
 }
 /**

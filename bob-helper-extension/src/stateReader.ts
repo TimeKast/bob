@@ -13,6 +13,7 @@ const STABLE_POLLS_FOR_IDLE = 6;
 
 export async function readAntigravityState(): Promise<AntigravityState> {
     const workspaceName = vscode.workspace.workspaceFolders?.[0]?.name || 'unknown';
+    const workspacePath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
     
     // Get agent working state from getDiagnostics
     const { agentWorking, currentStepIndex } = await checkAgentWorkingState();
@@ -37,6 +38,7 @@ export async function readAntigravityState(): Promise<AntigravityState> {
         agentWorking,
         terminalPending,
         workspaceName,
+        workspacePath,
     };
 }
 

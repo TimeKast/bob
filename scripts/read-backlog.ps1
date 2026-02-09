@@ -27,13 +27,24 @@ try {
     $backlogBase = Join-Path $ProjectPath "docs\backlog"
     
     if (-not (Test-Path $backlogBase)) {
-        # Search recursively for docs/backlog folder (max 2 levels deep)
-        $docsFolder = Get-ChildItem -Path $ProjectPath -Directory -Recurse -Depth 2 | 
-        Where-Object { $_.Name -eq "docs" } | 
+        # Try docs/*/backlog pattern (e.g., docs/multiplataforma/backlog)
+        $nestedBacklog = Get-ChildItem -Path (Join-Path $ProjectPath "docs") -Directory -ErrorAction SilentlyContinue | 
+        ForEach-Object { Join-Path $_.FullName "backlog" } |
+        Where-Object { Test-Path $_ } |
         Select-Object -First 1
         
-        if ($docsFolder) {
-            $backlogBase = Join-Path $docsFolder.FullName "backlog"
+        if ($nestedBacklog) {
+            $backlogBase = $nestedBacklog
+        }
+        else {
+            # Search recursively for docs/backlog folder (max 2 levels deep)
+            $docsFolder = Get-ChildItem -Path $ProjectPath -Directory -Recurse -Depth 2 | 
+            Where-Object { $_.Name -eq "docs" } | 
+            Select-Object -First 1
+            
+            if ($docsFolder) {
+                $backlogBase = Join-Path $docsFolder.FullName "backlog"
+            }
         }
     }
     

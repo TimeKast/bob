@@ -31,6 +31,8 @@ pub struct ExtensionInfo {
     pub window_id: String,
     #[serde(rename = "workspaceName")]
     pub workspace_name: String,
+    #[serde(rename = "workspacePath", default)]
+    pub workspace_path: String,
     #[serde(rename = "extensionVersion")]
     pub extension_version: String,
 }
@@ -49,6 +51,8 @@ pub struct AntigravityState {
     pub terminal_pending: bool,
     #[serde(rename = "workspaceName")]
     pub workspace_name: String,
+    #[serde(rename = "workspacePath", default)]
+    pub workspace_path: String,
 }
 
 /// Represents a connected extension instance
@@ -442,7 +446,7 @@ pub async fn send_to_extension(
 /// Get the list of connected extensions with their cached state
 pub async fn get_connected_extensions(
     registry: &ExtensionRegistry,
-) -> Vec<(String, String, Option<AntigravityState>)> {
+) -> Vec<(String, String, String, Option<AntigravityState>)> {
     let extensions = registry.read().await;
     extensions
         .iter()
@@ -450,6 +454,7 @@ pub async fn get_connected_extensions(
             (
                 wid.clone(),
                 ext.info.workspace_name.clone(),
+                ext.info.workspace_path.clone(),
                 ext.last_state.clone(),
             )
         })

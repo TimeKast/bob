@@ -565,10 +565,11 @@ async fn get_silent_extensions(
     let extensions = ws_server::get_connected_extensions(&state).await;
     let result: Vec<serde_json::Value> = extensions
         .into_iter()
-        .map(|(window_id, workspace_name, last_state)| {
+        .map(|(window_id, workspace_name, workspace_path, last_state)| {
             serde_json::json!({
                 "windowId": window_id,
                 "workspaceName": workspace_name,
+                "workspacePath": workspace_path,
                 "state": last_state,
             })
         })

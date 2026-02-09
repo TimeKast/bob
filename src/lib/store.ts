@@ -226,11 +226,13 @@ export async function updateSilentModeConnections(): Promise<void> {
             list.map(instance => {
                 const match = matchExtensionToInstance(extensions, instance);
                 if (match) {
-                    console.log(`[Silent] ✅ ${instance.projectName} → extension ${match.windowId} (silent mode)`);
+                    console.log(`[Silent] ✅ ${instance.projectName} → extension ${match.windowId} (silent mode, path: ${match.workspacePath})`);
                     return {
                         ...instance,
                         connectionMode: 'silent' as const,
                         silentWindowId: match.windowId,
+                        // Use workspace path from extension if available (for backlog detection)
+                        projectPath: match.workspacePath || instance.projectPath,
                     };
                 } else {
                     // No matching extension — use legacy mode

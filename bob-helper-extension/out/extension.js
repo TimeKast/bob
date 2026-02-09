@@ -98,6 +98,7 @@ function connect() {
             const hello = {
                 extensionVersion: '0.1.0',
                 workspaceName: vscode.workspace.workspaceFolders?.[0]?.name || 'unknown',
+                workspacePath: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '',
                 windowId: `ext-${Date.now()}`,
             };
             send({ type: 'hello', payload: hello, id: 'hello' });
