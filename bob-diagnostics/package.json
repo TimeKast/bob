@@ -1,0 +1,37 @@
+{
+  "name": "bob-diagnostics",
+  "displayName": "BOB Diagnostics",
+  "description": "Diagnostic tool to capture Antigravity state for analysis",
+  "version": "0.1.0",
+  "publisher": "timekast",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "bob-diagnostics.captureDiagnostics",
+        "title": "BOB: Capture Diagnostics"
+      },
+      {
+        "command": "bob-diagnostics.captureAllCommands",
+        "title": "BOB: List All Antigravity Commands"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "npx @vscode/vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.22.0",
+    "typescript": "^5.3.0"
+  }
+}

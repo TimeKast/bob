@@ -87,49 +87,56 @@ export const log = {
 // Instances store
 export const instances = writable<Instance[]>([]);
 
-// Scan for Antigravity instances (VS Code windows)
+// Scan for Antigravity instances via Silent Mode (WebSocket connections)
 export async function scanForInstances(): Promise<void> {
     try {
-        // Call Tauri backend to scan for windows
-        const results = await invoke<ScanResult[]>('scan_windows');
-        await log.info(`Scan completed: found ${results.length} Antigravity instances`);
+        // Get connected extensions via Silent Mode (cross-platform)
+        const silentExtensions = await getSilentExtensions();
+        await log.info(`Scan completed: found ${silentExtensions.length} connected extensions`);
 
         const currentInstances = get(instances);
 
-        // Map scan results to Instance objects
-        const newInstances: Instance[] = results.map((result: ScanResult) => {
-            // Check if this instance already exists
-            const existing = currentInstances.find(i => i.windowHandle === result.windowHandle);
+        // Map silent extensions to Instance objects
+        const newInstances: Instance[] = silentExtensions.map((ext) => {
+            // Use workspacePath from extension, with windowId as handle
+            const windowHandle = parseInt(ext.windowId.replace(/\D/g, '')) || Date.now();
+            
+            // Check if this instance already exists (by workspace name)
+            const existing = currentInstances.find(i => 
+                i.projectName.toLowerCase() === ext.workspaceName.toLowerCase()
+            );
 
             if (existing) {
                 return {
                     ...existing,
-                    windowTitle: result.windowTitle
+                    windowTitle: `${ext.workspaceName} - Antigravity`,
+                    projectPath: ext.workspacePath || existing.projectPath,
+                    connectionMode: 'silent' as const,
+                    silentWindowId: ext.windowId,
                 };
             }
 
-            // Create new instance
+            // Create new instance from silent extension
             return {
-                id: `instance-${result.windowHandle}`,
-                windowTitle: result.windowTitle,
-                windowHandle: result.windowHandle,
-                projectPath: extractProjectPath(result.windowTitle),
-                projectName: extractProjectName(result.windowTitle),
+                id: `instance-${ext.windowId}`,
+                windowTitle: `${ext.workspaceName} - Antigravity`,
+                windowHandle: windowHandle,
+                projectPath: ext.workspacePath || '',
+                projectName: ext.workspaceName,
                 enabled: false,
                 currentIssue: 0,
                 totalIssues: 0,
                 retryCount: 0,
                 maxRetries: get(settings).maxRetries,
-                status: 'idle',
+                status: ext.state?.agentWorking ? 'working' : 'idle',
                 lastActivity: Date.now(),
-                stepCount: 0
+                stepCount: 0,
+                connectionMode: 'silent' as const,
+                silentWindowId: ext.windowId,
             };
         });
 
         instances.set(newInstances);
-        
-        // Check for silent mode extensions and update connection modes
-        await updateSilentModeConnections();
         
         // Update backlog info for each instance (wait for it to complete)
         await updateInstanceBacklogs();
