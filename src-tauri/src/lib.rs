@@ -390,21 +390,34 @@ pub struct BacklogResult {
 
 /// Read backlog from project path
 #[tauri::command]
-fn read_backlog(project_path: String) -> Result<BacklogResult, String> {
+fn read_backlog(app: tauri::AppHandle, project_path: String) -> Result<BacklogResult, String> {
+    use tauri::Manager;
+
     let script_path = if cfg!(debug_assertions) {
+        // Dev mode: look in project root
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .map(|p| p.join("scripts").join("read-backlog.ps1"))
             .unwrap_or_else(|| std::path::PathBuf::from("scripts/read-backlog.ps1"))
     } else {
-        std::env::current_exe()
-            .ok()
-            .and_then(|p| {
-                p.parent()
-                    .map(|p| p.join("scripts").join("read-backlog.ps1"))
+        // Production: use Tauri's resource directory
+        app.path()
+            .resource_dir()
+            .map(|p| p.join("scripts").join("read-backlog.ps1"))
+            .unwrap_or_else(|_| {
+                // Fallback: try relative to exe
+                std::env::current_exe()
+                    .ok()
+                    .and_then(|p| {
+                        p.parent()
+                            .map(|p| p.join("scripts").join("read-backlog.ps1"))
+                    })
+                    .unwrap_or_else(|| std::path::PathBuf::from("scripts/read-backlog.ps1"))
             })
-            .unwrap_or_else(|| std::path::PathBuf::from("scripts/read-backlog.ps1"))
     };
+
+    println!("[read_backlog] Script path: {:?}", script_path);
+    println!("[read_backlog] Project path: {}", project_path);
 
     let output = std::process::Command::new("powershell")
         .args([
@@ -419,6 +432,7 @@ fn read_backlog(project_path: String) -> Result<BacklogResult, String> {
         .map_err(|e| format!("Failed to execute PowerShell: {}", e))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    println!("[read_backlog] Output: {}", stdout);
 
     // Parse JSON output
     if let Ok(result) = serde_json::from_str::<BacklogResult>(&stdout) {
