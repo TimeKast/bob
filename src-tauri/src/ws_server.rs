@@ -53,6 +53,8 @@ pub struct AntigravityState {
     pub workspace_name: String,
     #[serde(rename = "workspacePath", default)]
     pub workspace_path: String,
+    #[serde(rename = "consecutiveErrors", default)]
+    pub consecutive_errors: u32,
 }
 
 /// Represents a connected extension instance

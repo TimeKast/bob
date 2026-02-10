@@ -21,6 +21,7 @@ export interface SilentState {
     terminalPending: boolean;
     workspaceName: string;
     workspacePath: string;  // Full path to workspace root
+    consecutiveErrors: number;  // Fatal errors since last successful step
 }
 
 // ─── Extension Discovery ───────────────────────────────────────────

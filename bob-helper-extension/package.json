@@ -2,7 +2,7 @@
   "name": "bob-helper",
   "displayName": "BOB Helper",
   "description": "Companion extension for BOB Monitor — enables silent mode automation for Antigravity",
-  "version": "0.1.25",
+  "version": "0.1.26",
   "publisher": "timekast",
   "engines": {
     "vscode": "^1.93.0"

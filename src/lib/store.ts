@@ -128,7 +128,8 @@ export async function scanForInstances(): Promise<void> {
                 totalIssues: 0,
                 retryCount: 0,
                 maxRetries: get(settings).maxRetries,
-                status: ext.state?.agentWorking ? 'working' : 'idle',
+                status: ext.state?.agentWorking ? 'working' 
+                      : ((ext.state?.consecutiveErrors ?? 0) > 0) ? 'error' : 'idle',
                 lastActivity: Date.now(),
                 stepCount: 0,
                 connectionMode: 'silent' as const,

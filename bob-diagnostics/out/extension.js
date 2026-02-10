@@ -41,6 +41,12 @@ const vscode = __importStar(require("vscode"));
 let outputChannel;
 function activate(context) {
     outputChannel = vscode.window.createOutputChannel('BOB Diagnostics');
+    // Status bar button
+    const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 50);
+    statusBar.text = '🔍 Diag';
+    statusBar.tooltip = 'BOB: Capture Antigravity Diagnostics';
+    statusBar.command = 'bob-diagnostics.captureDiagnostics';
+    statusBar.show();
     // Command: Capture Diagnostics
     const captureDiagnostics = vscode.commands.registerCommand('bob-diagnostics.captureDiagnostics', async () => {
         outputChannel.clear();
@@ -58,39 +64,66 @@ function activate(context) {
             if (result && typeof result === 'string') {
                 try {
                     const parsed = JSON.parse(result);
-                    outputChannel.appendLine('✅ Raw JSON (formatted):');
-                    outputChannel.appendLine('─────────────────────────────────────────────────────────');
-                    outputChannel.appendLine(JSON.stringify(parsed, null, 2));
-                    outputChannel.appendLine('─────────────────────────────────────────────────────────');
-                    // Highlight key fields
-                    outputChannel.appendLine('');
-                    outputChannel.appendLine('🔍 KEY FIELDS ANALYSIS:');
-                    outputChannel.appendLine('');
-                    // Check recentTrajectories
-                    if (parsed.recentTrajectories?.length) {
-                        outputChannel.appendLine(`📋 recentTrajectories: ${parsed.recentTrajectories.length} items`);
-                        parsed.recentTrajectories.forEach((traj, i) => {
-                            outputChannel.appendLine(`  [${i}] lastStepIndex: ${traj.lastStepIndex}`);
-                            outputChannel.appendLine(`      summary: ${traj.summary?.substring(0, 100)}...`);
-                            // Log ALL fields of trajectory
-                            outputChannel.appendLine(`      ALL FIELDS: ${Object.keys(traj).join(', ')}`);
-                            // Check for error-related fields
-                            if (traj.status)
-                                outputChannel.appendLine(`      ⚠️ status: ${traj.status}`);
-                            if (traj.error)
-                                outputChannel.appendLine(`      ❌ error: ${JSON.stringify(traj.error)}`);
-                            if (traj.failed)
-                                outputChannel.appendLine(`      ❌ failed: ${traj.failed}`);
-                            if (traj.state)
-                                outputChannel.appendLine(`      📌 state: ${traj.state}`);
-                        });
+                    // ── FATAL ERRORS SECTION ──
+                    const logs = parsed.extensionLogs || [];
+                    // Patterns that KILL the agent
+                    const fatalPatterns = [
+                        'agent executor error',
+                        'connection was forcibly closed',
+                        'established connection was aborted',
+                        'no such host',
+                        'Language server shutting down',
+                        'Language server exited',
+                    ];
+                    const fatalErrors = logs.filter((line) => {
+                        const lower = line.toLowerCase();
+                        return fatalPatterns.some(p => lower.includes(p.toLowerCase()));
+                    });
+                    if (fatalErrors.length === 0) {
+                        outputChannel.appendLine('✅ NO FATAL ERRORS FOUND');
                     }
                     else {
-                        outputChannel.appendLine('📋 recentTrajectories: (empty or missing)');
+                        outputChannel.appendLine(`💀 FATAL ERRORS: ${fatalErrors.length}`);
+                        outputChannel.appendLine('─────────────────────────────────────────────────────────');
+                        fatalErrors.forEach((line, i) => {
+                            outputChannel.appendLine(`  ${i + 1}. ${line.trim()}`);
+                        });
+                        outputChannel.appendLine('─────────────────────────────────────────────────────────');
                     }
-                    // Log all top-level keys
+                    // ── 503 ERRORS (may kill after retries) ──
+                    const capacityErrors = logs.filter((line) => line.includes('No capacity available'));
+                    if (capacityErrors.length > 0) {
+                        outputChannel.appendLine('');
+                        outputChannel.appendLine(`⚠️ 503 CAPACITY ERRORS: ${capacityErrors.length}`);
+                        // Show last 5 only
+                        capacityErrors.slice(-5).forEach((line) => {
+                            const match = line.match(/(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/);
+                            const model = line.match(/model (\S+)/);
+                            outputChannel.appendLine(`  ${match?.[1] || '?'} → ${model?.[1] || '?'}`);
+                        });
+                    }
+                    // ── LAST ACTIVITY ──
                     outputChannel.appendLine('');
-                    outputChannel.appendLine(`📂 TOP-LEVEL KEYS: ${Object.keys(parsed).join(', ')}`);
+                    const plannerLogs = logs.filter((line) => line.includes('Requesting planner'));
+                    if (plannerLogs.length > 0) {
+                        const last = plannerLogs[plannerLogs.length - 1];
+                        const match = last.match(/(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/);
+                        const msgs = last.match(/(\d+) chat messages/);
+                        outputChannel.appendLine(`📊 LAST AGENT ACTIVITY: ${match?.[1] || '?'} (${msgs?.[1] || '?'} messages)`);
+                    }
+                    // ── TRAJECTORIES ──
+                    if (parsed.recentTrajectories?.length) {
+                        outputChannel.appendLine('');
+                        outputChannel.appendLine(`📋 TRAJECTORIES: ${parsed.recentTrajectories.length}`);
+                        parsed.recentTrajectories.forEach((traj, i) => {
+                            const status = traj.status || traj.state || 'unknown';
+                            const error = traj.error ? `❌ ${JSON.stringify(traj.error)}` : '✅';
+                            outputChannel.appendLine(`  [${i}] step ${traj.lastStepIndex || '?'} | ${status} | ${error}`);
+                        });
+                    }
+                    // ── TOP-LEVEL KEYS (for reference) ──
+                    outputChannel.appendLine('');
+                    outputChannel.appendLine(`📂 KEYS: ${Object.keys(parsed).join(', ')}`);
                 }
                 catch (parseErr) {
                     outputChannel.appendLine('⚠️ Could not parse as JSON:');
@@ -139,7 +172,7 @@ function activate(context) {
         outputChannel.appendLine('');
         outputChannel.appendLine('═══════════════════════════════════════════════════════════');
     });
-    context.subscriptions.push(captureDiagnostics, captureAllCommands, outputChannel);
+    context.subscriptions.push(captureDiagnostics, captureAllCommands, outputChannel, statusBar);
     console.log('BOB Diagnostics extension activated');
 }
 function deactivate() { }

@@ -3778,18 +3778,30 @@ var init_logger = __esm({
 });
 
 // src/stateReader.ts
+var stateReader_exports = {};
+__export(stateReader_exports, {
+  StateWatcher: () => StateWatcher,
+  markPromptSent: () => markPromptSent,
+  readAntigravityState: () => readAntigravityState
+});
+function markPromptSent() {
+  promptSentAt = Date.now();
+  lastConsecutiveErrors = 0;
+  log(`[stateReader] Prompt sent, will check for errors after 30s`);
+}
 async function readAntigravityState() {
   const workspaceName = vscode.workspace.workspaceFolders?.[0]?.name || "unknown";
   const workspacePath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || "";
-  const { agentWorking, currentStepIndex } = await checkAgentWorkingState();
+  const { agentWorking, currentStepIndex, consecutiveErrors } = await checkAgentWorkingState();
   const hasEnterButton = !agentWorking;
   if (lastAgentWorking === null || agentWorking !== lastAgentWorking) {
-    log(agentWorking ? `\u23F3 Agent WORKING (step ${currentStepIndex})` : `\u2705 Agent IDLE (step ${currentStepIndex})`);
+    const errStr = consecutiveErrors > 0 ? ` \u274C errors: ${consecutiveErrors}` : "";
+    log(agentWorking ? `\u23F3 Agent WORKING (step ${currentStepIndex})` : `\u2705 Agent IDLE (step ${currentStepIndex})${errStr}`);
     lastAgentWorking = agentWorking;
   }
   const hasAcceptButton = false;
   const terminalPending = false;
-  const hasRetryButton = false;
+  const hasRetryButton = consecutiveErrors > 0;
   return {
     hasAcceptButton,
     hasRetryButton,
@@ -3797,14 +3809,15 @@ async function readAntigravityState() {
     agentWorking,
     terminalPending,
     workspaceName,
-    workspacePath
+    workspacePath,
+    consecutiveErrors
   };
 }
 async function checkAgentWorkingState() {
   try {
     const result = await vscode.commands.executeCommand("antigravity.getDiagnostics");
     if (!result || typeof result !== "string") {
-      return { agentWorking: false, currentStepIndex: -1 };
+      return { agentWorking: false, currentStepIndex: -1, consecutiveErrors: lastConsecutiveErrors };
     }
     const diagnostics = JSON.parse(result);
     if (diagnostics.recentTrajectories?.length) {
@@ -3814,27 +3827,55 @@ async function checkAgentWorkingState() {
         log(`[DEBUG] Got step ${currentStepIndex} from: ${activeTrajectory.summary}`);
         lastStepIndex = currentStepIndex;
         stepIndexStableCount = 0;
-        return { agentWorking: false, currentStepIndex };
+        return { agentWorking: false, currentStepIndex, consecutiveErrors: 0 };
       }
       if (currentStepIndex !== lastStepIndex) {
         lastStepIndex = currentStepIndex;
         stepIndexStableCount = 0;
-        return { agentWorking: true, currentStepIndex };
+        promptSentAt = null;
+        lastConsecutiveErrors = 0;
+        return { agentWorking: true, currentStepIndex, consecutiveErrors: 0 };
       } else {
         stepIndexStableCount++;
-        return {
-          agentWorking: stepIndexStableCount < STABLE_POLLS_FOR_IDLE,
-          currentStepIndex
-        };
+        const agentWorking = stepIndexStableCount < STABLE_POLLS_FOR_IDLE;
+        if (!agentWorking && promptSentAt && Date.now() - promptSentAt >= ERROR_CHECK_DELAY_MS) {
+          const errors = parseFatalErrors(diagnostics.extensionLogs || []);
+          if (errors > 0) {
+            lastConsecutiveErrors = errors;
+            log(`[stateReader] \u{1F480} Detected ${errors} fatal error(s) since last step`);
+          }
+          promptSentAt = null;
+        }
+        return { agentWorking, currentStepIndex, consecutiveErrors: lastConsecutiveErrors };
       }
     }
-    return { agentWorking: false, currentStepIndex: -1 };
+    return { agentWorking: false, currentStepIndex: -1, consecutiveErrors: lastConsecutiveErrors };
   } catch (e) {
     log(`[DEBUG] Error: ${e}`);
-    return { agentWorking: false, currentStepIndex: -1 };
+    return { agentWorking: false, currentStepIndex: -1, consecutiveErrors: lastConsecutiveErrors };
   }
 }
-var vscode, lastStepIndex, stepIndexStableCount, lastAgentWorking, STABLE_POLLS_FOR_IDLE, StateWatcher;
+function parseFatalErrors(logs) {
+  if (!logs || logs.length === 0)
+    return 0;
+  let lastPlannerIdx = -1;
+  for (let i = logs.length - 1; i >= 0; i--) {
+    if (logs[i].includes("Requesting planner")) {
+      lastPlannerIdx = i;
+      break;
+    }
+  }
+  const startIdx = lastPlannerIdx >= 0 ? lastPlannerIdx : Math.max(0, logs.length - 50);
+  let fatalCount = 0;
+  for (let i = startIdx; i < logs.length; i++) {
+    const line = logs[i].toLowerCase();
+    if (FATAL_PATTERNS.some((p) => line.includes(p))) {
+      fatalCount++;
+    }
+  }
+  return fatalCount;
+}
+var vscode, lastStepIndex, stepIndexStableCount, lastAgentWorking, STABLE_POLLS_FOR_IDLE, promptSentAt, lastConsecutiveErrors, ERROR_CHECK_DELAY_MS, FATAL_PATTERNS, StateWatcher;
 var init_stateReader = __esm({
   "src/stateReader.ts"() {
     "use strict";
@@ -3844,6 +3885,15 @@ var init_stateReader = __esm({
     stepIndexStableCount = 0;
     lastAgentWorking = null;
     STABLE_POLLS_FOR_IDLE = 12;
+    promptSentAt = null;
+    lastConsecutiveErrors = 0;
+    ERROR_CHECK_DELAY_MS = 3e4;
+    FATAL_PATTERNS = [
+      "agent executor error",
+      "connection was forcibly closed",
+      "established connection was aborted",
+      "language server exited"
+    ];
     StateWatcher = class {
       interval = null;
       lastState = "";
@@ -3909,6 +3959,7 @@ async function retryAction() {
 async function sendPrompt(text) {
   const { log: log3 } = await Promise.resolve().then(() => (init_logger(), logger_exports));
   const { send: send2 } = await Promise.resolve().then(() => (init_extension(), extension_exports));
+  const { markPromptSent: markPromptSent2 } = await Promise.resolve().then(() => (init_stateReader(), stateReader_exports));
   log3(`[sendPrompt] Starting with text: "${text.substring(0, 50)}..."`);
   try {
     log3(`[sendPrompt] Step 1: Focusing agentPanel`);
@@ -3934,6 +3985,7 @@ async function sendPrompt(text) {
       id: `enter-${Date.now()}`
     });
     log3(`[sendPrompt] Complete!`);
+    markPromptSent2();
     return { success: true, action: "sendPrompt" };
   } catch (e) {
     log3(`[sendPrompt] FAILED: ${e}`);

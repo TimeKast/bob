@@ -77,6 +77,7 @@ export async function retryAction(): Promise<ActionResult> {
 export async function sendPrompt(text: string): Promise<ActionResult> {
     const { log } = await import('./logger');
     const { send } = await import('./extension');
+    const { markPromptSent } = await import('./stateReader');
     
     log(`[sendPrompt] Starting with text: "${text.substring(0, 50)}..."`);
     
@@ -115,6 +116,7 @@ export async function sendPrompt(text: string): Promise<ActionResult> {
         });
         
         log(`[sendPrompt] Complete!`);
+        markPromptSent();
         return { success: true, action: 'sendPrompt' };
     } catch (e) {
         log(`[sendPrompt] FAILED: ${e}`);

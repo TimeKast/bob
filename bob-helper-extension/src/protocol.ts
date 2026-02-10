@@ -46,6 +46,7 @@ export interface AntigravityState {
   terminalPending: boolean;    // Terminal command awaiting approval
   workspaceName: string;       // Current workspace/project name
   workspacePath: string;       // Full path to workspace root
+  consecutiveErrors: number;   // Fatal errors since last successful step
 }
 
 // ─── Handshake ──────────────────────────────────────────────────────
