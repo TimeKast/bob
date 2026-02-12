@@ -3742,6 +3742,19 @@ var require_websocket_server = __commonJS({
   }
 });
 
+// node_modules/ws/wrapper.mjs
+var import_stream, import_receiver, import_sender, import_websocket, import_websocket_server, wrapper_default;
+var init_wrapper = __esm({
+  "node_modules/ws/wrapper.mjs"() {
+    import_stream = __toESM(require_stream(), 1);
+    import_receiver = __toESM(require_receiver(), 1);
+    import_sender = __toESM(require_sender(), 1);
+    import_websocket = __toESM(require_websocket(), 1);
+    import_websocket_server = __toESM(require_websocket_server(), 1);
+    wrapper_default = import_websocket.default;
+  }
+});
+
 // src/logger.ts
 var logger_exports = {};
 __export(logger_exports, {
@@ -3930,29 +3943,7 @@ var init_stateReader = __esm({
   }
 });
 
-// src/extension.ts
-var extension_exports = {};
-__export(extension_exports, {
-  activate: () => activate,
-  deactivate: () => deactivate,
-  send: () => send
-});
-module.exports = __toCommonJS(extension_exports);
-var vscode3 = __toESM(require("vscode"));
-
-// node_modules/ws/wrapper.mjs
-var import_stream = __toESM(require_stream(), 1);
-var import_receiver = __toESM(require_receiver(), 1);
-var import_sender = __toESM(require_sender(), 1);
-var import_websocket = __toESM(require_websocket(), 1);
-var import_websocket_server = __toESM(require_websocket_server(), 1);
-var wrapper_default = import_websocket.default;
-
-// src/extension.ts
-init_stateReader();
-
 // src/actions.ts
-var vscode2 = __toESM(require("vscode"));
 async function acceptAll() {
   return executeAction("antigravity.command.accept", "acceptAll");
 }
@@ -3986,16 +3977,108 @@ async function retryAction() {
 }
 async function sendPrompt(text) {
   const { log: log3 } = await Promise.resolve().then(() => (init_logger(), logger_exports));
+  const { send: send2 } = await Promise.resolve().then(() => (init_extension(), extension_exports));
   const { markPromptSent: markPromptSent2 } = await Promise.resolve().then(() => (init_stateReader(), stateReader_exports));
+  log3(`[sendPrompt] \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550`);
   log3(`[sendPrompt] Starting with text: "${text.substring(0, 50)}..."`);
   try {
-    log3(`[sendPrompt] Using antigravity.sendChatActionMessage`);
-    await vscode2.commands.executeCommand("antigravity.sendChatActionMessage", text);
-    log3(`[sendPrompt] Complete via sendChatActionMessage!`);
+    log3(`[sendPrompt] Step 1: Focusing agentPanel`);
+    await vscode2.commands.executeCommand("antigravity.agentPanel.focus");
+    await sleep(200);
+    log3(`[sendPrompt] Step 2: Activating chat input via sendTextToChat`);
+    try {
+      await vscode2.commands.executeCommand("antigravity.sendTextToChat", true, "");
+    } catch {
+    }
+    await sleep(200);
+    log3(`[sendPrompt] Step 3: Clipboard + paste`);
+    await vscode2.env.clipboard.writeText(text);
+    await sleep(100);
+    await vscode2.commands.executeCommand("editor.action.clipboardPasteAction");
+    await sleep(400);
+    log3(`[sendPrompt] Step 4: Trying Enter methods...`);
+    try {
+      log3(`[sendPrompt] 4A: sendTextToChat(true, text) \u2014 maybe true=submit`);
+      await vscode2.commands.executeCommand("antigravity.sendTextToChat", true, text);
+      log3(`[sendPrompt]   \u2192 4A: no error thrown`);
+    } catch (e) {
+      log3(`[sendPrompt]   \u2192 4A FAILED: ${e.message?.substring(0, 80)}`);
+    }
+    await sleep(300);
+    const cascadePayloads = [
+      { type: "submit" },
+      { type: "sendMessage" },
+      { action: "submit" },
+      { action: "send" }
+    ];
+    for (let i = 0; i < cascadePayloads.length; i++) {
+      try {
+        log3(`[sendPrompt] 4B.${i}: executeCascadeAction(${JSON.stringify(cascadePayloads[i])})`);
+        await vscode2.commands.executeCommand("antigravity.executeCascadeAction", cascadePayloads[i]);
+        log3(`[sendPrompt]   \u2192 4B.${i}: no error thrown`);
+      } catch (e) {
+        log3(`[sendPrompt]   \u2192 4B.${i} FAILED: ${e.message?.substring(0, 80)}`);
+      }
+    }
+    await sleep(200);
+    try {
+      log3(`[sendPrompt] 4C: acceptCompletion`);
+      await vscode2.commands.executeCommand("antigravity.acceptCompletion");
+      log3(`[sendPrompt]   \u2192 4C: no error thrown`);
+    } catch (e) {
+      log3(`[sendPrompt]   \u2192 4C FAILED: ${e.message?.substring(0, 80)}`);
+    }
+    await sleep(200);
+    try {
+      log3(`[sendPrompt] 4D: OS-native key simulation`);
+      const { exec } = require("child_process");
+      const platform = process.platform;
+      if (platform === "darwin") {
+        log3(`[sendPrompt]   \u2192 4D: Mac detected, using osascript`);
+        await new Promise((resolve, reject) => {
+          exec(
+            `osascript -e 'tell application "System Events" to key code 36'`,
+            (err) => err ? reject(err) : resolve()
+          );
+        });
+        log3(`[sendPrompt]   \u2192 4D: osascript Enter sent`);
+      } else if (platform === "win32") {
+        log3(`[sendPrompt]   \u2192 4D: Windows detected, using PowerShell SendKeys`);
+        await new Promise((resolve, reject) => {
+          exec(
+            `powershell -Command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')"`,
+            (err) => err ? reject(err) : resolve()
+          );
+        });
+        log3(`[sendPrompt]   \u2192 4D: PowerShell Enter sent`);
+      } else {
+        log3(`[sendPrompt]   \u2192 4D: Linux detected, using xdotool`);
+        await new Promise((resolve, reject) => {
+          exec(
+            "xdotool key Return",
+            (err) => err ? reject(err) : resolve()
+          );
+        });
+        log3(`[sendPrompt]   \u2192 4D: xdotool Enter sent`);
+      }
+    } catch (e) {
+      log3(`[sendPrompt]   \u2192 4D FAILED: ${e.message?.substring(0, 80)}`);
+    }
+    await sleep(200);
+    log3(`[sendPrompt] 4E: simulateEnter via BOB (Tauri fallback)`);
+    const workspaceName = vscode2.workspace.workspaceFolders?.[0]?.name || "";
+    send2({
+      type: "simulateEnter",
+      payload: { workspaceName },
+      id: `enter-${Date.now()}`
+    });
+    log3(`[sendPrompt]   \u2192 4E: simulateEnter sent to BOB`);
+    log3(`[sendPrompt] \u2705 All Enter methods attempted \u2014 check which one actually submitted`);
+    log3(`[sendPrompt] \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550`);
     markPromptSent2();
     return { success: true, action: "sendPrompt" };
   } catch (e) {
-    log3(`[sendPrompt] sendChatActionMessage FAILED: ${e}`);
+    log3(`[sendPrompt] \u274C FATAL: ${e}`);
     return {
       success: false,
       action: "sendPrompt",
@@ -4015,17 +4098,25 @@ async function executeAction(command, actionName) {
     };
   }
 }
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+var vscode2;
+var init_actions = __esm({
+  "src/actions.ts"() {
+    "use strict";
+    vscode2 = __toESM(require("vscode"));
+  }
+});
 
 // src/extension.ts
-init_logger();
-var OUTPUT_CHANNEL_NAME = "BOB Helper";
-var DEFAULT_PORT = 9876;
-var RECONNECT_INTERVAL_MS = 5e3;
-var ws = null;
-var reconnectTimer = null;
-var stateWatcher = null;
-var outputChannel2;
-var statusBarItem;
+var extension_exports = {};
+__export(extension_exports, {
+  activate: () => activate,
+  deactivate: () => deactivate,
+  send: () => send
+});
+module.exports = __toCommonJS(extension_exports);
 function activate(context) {
   outputChannel2 = vscode3.window.createOutputChannel(OUTPUT_CHANNEL_NAME);
   initLogger(outputChannel2);
@@ -4243,9 +4334,9 @@ function updateStatusBar(status) {
 }
 function showStatus() {
   const connected = ws && ws.readyState === wrapper_default.OPEN;
-  const workspace3 = vscode3.workspace.workspaceFolders?.[0]?.name || "none";
+  const workspace4 = vscode3.workspace.workspaceFolders?.[0]?.name || "none";
   vscode3.window.showInformationMessage(
-    `BOB Helper: ${connected ? "\u2705 Connected" : "\u274C Disconnected"} | Workspace: ${workspace3}`,
+    `BOB Helper: ${connected ? "\u2705 Connected" : "\u274C Disconnected"} | Workspace: ${workspace4}`,
     connected ? "Disconnect" : "Connect"
   ).then((action) => {
     if (action === "Connect") {
@@ -4303,6 +4394,23 @@ async function discoverCommands() {
   log2("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
   vscode3.window.showInformationMessage(`Found ${matched.length} matching commands \u2014 see BOB Helper output`);
 }
+var vscode3, OUTPUT_CHANNEL_NAME, DEFAULT_PORT, RECONNECT_INTERVAL_MS, ws, reconnectTimer, stateWatcher, outputChannel2, statusBarItem;
+var init_extension = __esm({
+  "src/extension.ts"() {
+    vscode3 = __toESM(require("vscode"));
+    init_wrapper();
+    init_stateReader();
+    init_actions();
+    init_logger();
+    OUTPUT_CHANNEL_NAME = "BOB Helper";
+    DEFAULT_PORT = 9876;
+    RECONNECT_INTERVAL_MS = 5e3;
+    ws = null;
+    reconnectTimer = null;
+    stateWatcher = null;
+  }
+});
+init_extension();
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   activate,
