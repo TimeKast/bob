@@ -935,8 +935,8 @@ async function pollOnce(): Promise<void> {
 
                 // Chat ready — send prompt
                 if (silentState.hasEnterButton && !silentState.agentWorking) {
-                    // Exponential backoff cooldowns: 1st=15s, 2nd=180s(3min), 3rd=900s(15min)
-                    const BACKOFF_SECONDS = [15, 180, 900];
+                    // Exponential backoff cooldowns: 1st=120s(2min), 2nd=180s(3min), 3rd=900s(15min)
+                    const BACKOFF_SECONDS = [120, 180, 900];
 
                     // Check if step has advanced since last prompt
                     const currentStep = silentState.currentStepIndex || 0;

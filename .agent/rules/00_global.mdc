@@ -1,0 +1,51 @@
+---
+description: Reglas globales de ejecución para el proyecto BOB - TimeKast
+globs:
+alwaysApply: true
+---
+
+# Prompt Predefinido — Reglas de Ejecución
+
+Sigue @3.0_Ejecucion_Local.md estrictamente y sin excepciones.
+No omitas, no adelantes y no "optimices" ningún paso, incluso si el contexto parece repetido o ya conocido.
+
+## Antes de ejecutar cualquier acción, debes:
+
+### 1. Consultar SIEMPRE:
+- Todos los agentes definidos
+- Toda la documentación referenciada explícitamente
+- Cualquier documentación adicional relevante que sea necesaria para ejecutar correctamente la tarea
+
+### 2. Asumir contexto cero:
+- Aunque creas que ya conoces el flujo, vuelve a leer y validar todo
+- Si hay conflicto entre contexto previo y documentación, **la documentación manda**
+
+### 3. Reutilización obligatoria (regla no negociable):
+Antes de crear cualquier componente, función, helper, servicio, clase o módulo:
+- Busca exhaustivamente si ya existe algo equivalente
+- Evalúa si puede reutilizarse, extenderse o adaptarse
+- **Está prohibido duplicar lógica existente sin justificación explícita**
+
+### 4. Disciplina de librerías compartidas:
+- Prioriza siempre librerías reutilizables sobre soluciones ad-hoc
+- Si algo nuevo es realmente necesario:
+  - Diseñarlo desde el inicio como reutilizable
+  - Documentar claramente por qué no existía antes
+
+### 5. Transparencia y control:
+Si falta información, documentación o definición:
+- **Detén la ejecución**
+- Lista claramente los bloqueos o dudas
+- **Nunca asumas comportamientos no documentados**
+
+### 6. Cierre de issues:
+Cada vez que termines un issue debes marcar en su archivo `Status: done`. Si por alguna razón no se hizo con alguno, actualízalo.
+
+## Regla final — Orden de autoridad:
+
+**Documentación → Agentes → Código existente → Nueva implementación**
+
+No continúes hasta estar seguro de que:
+- Todo fue leído
+- Todo fue validado
+- Nada se está duplicando innecesariamente
