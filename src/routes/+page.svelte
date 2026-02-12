@@ -77,9 +77,23 @@
 
   function toggleInstance(id: string) {
     instances.update((list: Instance[]) =>
-      list.map((inst: Instance) =>
-        inst.id === id ? { ...inst, enabled: !inst.enabled } : inst,
-      ),
+      list.map((inst: Instance) => {
+        if (inst.id !== id) return inst;
+        const newEnabled = !inst.enabled;
+        // When re-enabling a blocked instance, clear all block state
+        if (newEnabled && inst.isBlocked) {
+          return {
+            ...inst,
+            enabled: true,
+            isBlocked: false,
+            blockReason: undefined,
+            retryCount: 0,
+            noAdvanceCount: 0,
+            status: "idle" as const,
+          };
+        }
+        return { ...inst, enabled: newEnabled };
+      }),
     );
   }
 

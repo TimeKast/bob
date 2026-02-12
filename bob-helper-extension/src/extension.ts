@@ -37,6 +37,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('bobHelper.connect', () => connect()),
         vscode.commands.registerCommand('bobHelper.disconnect', () => disconnect()),
         vscode.commands.registerCommand('bobHelper.status', () => showStatus()),
+        vscode.commands.registerCommand('bobHelper.discoverCommands', () => discoverCommands()),
         outputChannel,
         statusBarItem,
     );
@@ -298,4 +299,55 @@ function showStatus() {
 function log(message: string) {
     const timestamp = new Date().toISOString().substring(11, 23);
     outputChannel.appendLine(`[${timestamp}] ${message}`);
+}
+
+async function discoverCommands() {
+    const keywords = ['allow', 'permission', 'approve', 'trust', 'grant', 'yolo', 'tool', 'accept', 'cascade'];
+    const allCommands = await vscode.commands.getCommands(true);
+
+    // Filter for antigravity commands matching any keyword
+    const matched = allCommands.filter(cmd => {
+        const lower = cmd.toLowerCase();
+        return lower.includes('antigravity') && keywords.some(kw => lower.includes(kw));
+    });
+
+    outputChannel.show();
+    log('');
+    log('══════════════════════════════════════════');
+    log(`🔍 COMMAND DISCOVERY (${matched.length} matches from ${allCommands.length} total)`);
+    log(`Keywords: ${keywords.join(', ')}`);
+    log('──────────────────────────────────────────');
+    matched.sort().forEach(cmd => log(`  • ${cmd}`));
+    log('══════════════════════════════════════════');
+
+    // Also try executing each "allow/permission" variant to see which ones exist
+    const allowVariants = [
+        'antigravity.permission.allow',
+        'antigravity.permission.allowForConversation',
+        'antigravity.permission.allowAll',
+        'antigravity.permission.alwaysAllow',
+        'antigravity.tool.allow',
+        'antigravity.tool.approve',
+        'antigravity.agent.allow',
+        'antigravity.agent.approve',
+        'antigravity.agent.allowTool',
+        'antigravity.cascadeAction.allow',
+        'antigravity.yolo',
+    ];
+
+    log('');
+    log('🧪 TESTING ALLOW VARIANTS:');
+    for (const cmd of allowVariants) {
+        try {
+            await vscode.commands.executeCommand(cmd);
+            log(`  ✅ ${cmd} — EXECUTED (no error)`);
+        } catch (e: unknown) {
+            const errMsg = e instanceof Error ? e.message : String(e);
+            const exists = !errMsg.includes('not found') && !errMsg.includes('is not known');
+            log(`  ${exists ? '⚠️' : '❌'} ${cmd} — ${errMsg.substring(0, 80)}`);
+        }
+    }
+    log('══════════════════════════════════════════');
+
+    vscode.window.showInformationMessage(`Found ${matched.length} matching commands — see BOB Helper output`);
 }

@@ -3742,19 +3742,6 @@ var require_websocket_server = __commonJS({
   }
 });
 
-// node_modules/ws/wrapper.mjs
-var import_stream, import_receiver, import_sender, import_websocket, import_websocket_server, wrapper_default;
-var init_wrapper = __esm({
-  "node_modules/ws/wrapper.mjs"() {
-    import_stream = __toESM(require_stream(), 1);
-    import_receiver = __toESM(require_receiver(), 1);
-    import_sender = __toESM(require_sender(), 1);
-    import_websocket = __toESM(require_websocket(), 1);
-    import_websocket_server = __toESM(require_websocket_server(), 1);
-    wrapper_default = import_websocket.default;
-  }
-});
-
 // src/logger.ts
 var logger_exports = {};
 __export(logger_exports, {
@@ -3943,7 +3930,29 @@ var init_stateReader = __esm({
   }
 });
 
+// src/extension.ts
+var extension_exports = {};
+__export(extension_exports, {
+  activate: () => activate,
+  deactivate: () => deactivate,
+  send: () => send
+});
+module.exports = __toCommonJS(extension_exports);
+var vscode3 = __toESM(require("vscode"));
+
+// node_modules/ws/wrapper.mjs
+var import_stream = __toESM(require_stream(), 1);
+var import_receiver = __toESM(require_receiver(), 1);
+var import_sender = __toESM(require_sender(), 1);
+var import_websocket = __toESM(require_websocket(), 1);
+var import_websocket_server = __toESM(require_websocket_server(), 1);
+var wrapper_default = import_websocket.default;
+
+// src/extension.ts
+init_stateReader();
+
 // src/actions.ts
+var vscode2 = __toESM(require("vscode"));
 async function acceptAll() {
   return executeAction("antigravity.command.accept", "acceptAll");
 }
@@ -3977,37 +3986,16 @@ async function retryAction() {
 }
 async function sendPrompt(text) {
   const { log: log3 } = await Promise.resolve().then(() => (init_logger(), logger_exports));
-  const { send: send2 } = await Promise.resolve().then(() => (init_extension(), extension_exports));
   const { markPromptSent: markPromptSent2 } = await Promise.resolve().then(() => (init_stateReader(), stateReader_exports));
   log3(`[sendPrompt] Starting with text: "${text.substring(0, 50)}..."`);
   try {
-    log3(`[sendPrompt] Step 1: Focusing agentPanel`);
-    await vscode2.commands.executeCommand("antigravity.agentPanel.focus");
-    await sleep(200);
-    log3(`[sendPrompt] Step 2: Activating chat input`);
-    try {
-      await vscode2.commands.executeCommand("antigravity.sendTextToChat", true, "");
-    } catch {
-    }
-    await sleep(200);
-    log3(`[sendPrompt] Step 3: Copying to clipboard`);
-    await vscode2.env.clipboard.writeText(text);
-    await sleep(100);
-    log3(`[sendPrompt] Step 4: Pasting from clipboard`);
-    await vscode2.commands.executeCommand("editor.action.clipboardPasteAction");
-    await sleep(400);
-    const workspaceName = vscode2.workspace.workspaceFolders?.[0]?.name || "";
-    log3(`[sendPrompt] Step 4: Sending simulateEnter to BOB (workspace: ${workspaceName})`);
-    send2({
-      type: "simulateEnter",
-      payload: { workspaceName },
-      id: `enter-${Date.now()}`
-    });
-    log3(`[sendPrompt] Complete!`);
+    log3(`[sendPrompt] Using antigravity.sendChatActionMessage`);
+    await vscode2.commands.executeCommand("antigravity.sendChatActionMessage", text);
+    log3(`[sendPrompt] Complete via sendChatActionMessage!`);
     markPromptSent2();
     return { success: true, action: "sendPrompt" };
   } catch (e) {
-    log3(`[sendPrompt] FAILED: ${e}`);
+    log3(`[sendPrompt] sendChatActionMessage FAILED: ${e}`);
     return {
       success: false,
       action: "sendPrompt",
@@ -4027,25 +4015,17 @@ async function executeAction(command, actionName) {
     };
   }
 }
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-var vscode2;
-var init_actions = __esm({
-  "src/actions.ts"() {
-    "use strict";
-    vscode2 = __toESM(require("vscode"));
-  }
-});
 
 // src/extension.ts
-var extension_exports = {};
-__export(extension_exports, {
-  activate: () => activate,
-  deactivate: () => deactivate,
-  send: () => send
-});
-module.exports = __toCommonJS(extension_exports);
+init_logger();
+var OUTPUT_CHANNEL_NAME = "BOB Helper";
+var DEFAULT_PORT = 9876;
+var RECONNECT_INTERVAL_MS = 5e3;
+var ws = null;
+var reconnectTimer = null;
+var stateWatcher = null;
+var outputChannel2;
+var statusBarItem;
 function activate(context) {
   outputChannel2 = vscode3.window.createOutputChannel(OUTPUT_CHANNEL_NAME);
   initLogger(outputChannel2);
@@ -4058,6 +4038,7 @@ function activate(context) {
     vscode3.commands.registerCommand("bobHelper.connect", () => connect()),
     vscode3.commands.registerCommand("bobHelper.disconnect", () => disconnect()),
     vscode3.commands.registerCommand("bobHelper.status", () => showStatus()),
+    vscode3.commands.registerCommand("bobHelper.discoverCommands", () => discoverCommands()),
     outputChannel2,
     statusBarItem
   );
@@ -4262,9 +4243,9 @@ function updateStatusBar(status) {
 }
 function showStatus() {
   const connected = ws && ws.readyState === wrapper_default.OPEN;
-  const workspace4 = vscode3.workspace.workspaceFolders?.[0]?.name || "none";
+  const workspace3 = vscode3.workspace.workspaceFolders?.[0]?.name || "none";
   vscode3.window.showInformationMessage(
-    `BOB Helper: ${connected ? "\u2705 Connected" : "\u274C Disconnected"} | Workspace: ${workspace4}`,
+    `BOB Helper: ${connected ? "\u2705 Connected" : "\u274C Disconnected"} | Workspace: ${workspace3}`,
     connected ? "Disconnect" : "Connect"
   ).then((action) => {
     if (action === "Connect") {
@@ -4279,23 +4260,49 @@ function log2(message) {
   const timestamp = (/* @__PURE__ */ new Date()).toISOString().substring(11, 23);
   outputChannel2.appendLine(`[${timestamp}] ${message}`);
 }
-var vscode3, OUTPUT_CHANNEL_NAME, DEFAULT_PORT, RECONNECT_INTERVAL_MS, ws, reconnectTimer, stateWatcher, outputChannel2, statusBarItem;
-var init_extension = __esm({
-  "src/extension.ts"() {
-    vscode3 = __toESM(require("vscode"));
-    init_wrapper();
-    init_stateReader();
-    init_actions();
-    init_logger();
-    OUTPUT_CHANNEL_NAME = "BOB Helper";
-    DEFAULT_PORT = 9876;
-    RECONNECT_INTERVAL_MS = 5e3;
-    ws = null;
-    reconnectTimer = null;
-    stateWatcher = null;
+async function discoverCommands() {
+  const keywords = ["allow", "permission", "approve", "trust", "grant", "yolo", "tool", "accept", "cascade"];
+  const allCommands = await vscode3.commands.getCommands(true);
+  const matched = allCommands.filter((cmd) => {
+    const lower = cmd.toLowerCase();
+    return lower.includes("antigravity") && keywords.some((kw) => lower.includes(kw));
+  });
+  outputChannel2.show();
+  log2("");
+  log2("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
+  log2(`\u{1F50D} COMMAND DISCOVERY (${matched.length} matches from ${allCommands.length} total)`);
+  log2(`Keywords: ${keywords.join(", ")}`);
+  log2("\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500");
+  matched.sort().forEach((cmd) => log2(`  \u2022 ${cmd}`));
+  log2("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
+  const allowVariants = [
+    "antigravity.permission.allow",
+    "antigravity.permission.allowForConversation",
+    "antigravity.permission.allowAll",
+    "antigravity.permission.alwaysAllow",
+    "antigravity.tool.allow",
+    "antigravity.tool.approve",
+    "antigravity.agent.allow",
+    "antigravity.agent.approve",
+    "antigravity.agent.allowTool",
+    "antigravity.cascadeAction.allow",
+    "antigravity.yolo"
+  ];
+  log2("");
+  log2("\u{1F9EA} TESTING ALLOW VARIANTS:");
+  for (const cmd of allowVariants) {
+    try {
+      await vscode3.commands.executeCommand(cmd);
+      log2(`  \u2705 ${cmd} \u2014 EXECUTED (no error)`);
+    } catch (e) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      const exists = !errMsg.includes("not found") && !errMsg.includes("is not known");
+      log2(`  ${exists ? "\u26A0\uFE0F" : "\u274C"} ${cmd} \u2014 ${errMsg.substring(0, 80)}`);
+    }
   }
-});
-init_extension();
+  log2("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
+  vscode3.window.showInformationMessage(`Found ${matched.length} matching commands \u2014 see BOB Helper output`);
+}
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   activate,

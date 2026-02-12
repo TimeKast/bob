@@ -2,7 +2,7 @@
     "name": "bob-autoclicker",
     "displayName": "BOB Auto Clicker",
     "description": "Auto-accepts Antigravity changes",
-    "version": "0.5.0",
+    "version": "0.6.0",
     "publisher": "timekast",
     "engines": {
         "vscode": "^1.85.0"
@@ -33,11 +33,6 @@
                     "type": "boolean",
                     "default": true,
                     "description": "Auto-accept all file changes"
-                },
-                "bobAutoclicker.enableAllow": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Auto-allow tool permission dialogs (Allow for conversation)"
                 },
                 "bobAutoclicker.intervalSeconds": {
                     "type": "number",

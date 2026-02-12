@@ -105,49 +105,22 @@ async function retryAction() {
 }
 /**
  * Send a prompt to Antigravity's chat.
- * Uses clipboard + paste approach (more reliable than sendTextToChat)
+ * Attempt A: Uses sendChatActionMessage to send+submit in one shot
  */
 async function sendPrompt(text) {
     const { log } = await Promise.resolve().then(() => __importStar(require('./logger')));
-    const { send } = await Promise.resolve().then(() => __importStar(require('./extension')));
     const { markPromptSent } = await Promise.resolve().then(() => __importStar(require('./stateReader')));
     log(`[sendPrompt] Starting with text: "${text.substring(0, 50)}..."`);
     try {
-        // Step 1: Focus the agent panel
-        log(`[sendPrompt] Step 1: Focusing agentPanel`);
-        await vscode.commands.executeCommand('antigravity.agentPanel.focus');
-        await sleep(200);
-        // Step 2: Activate chat input (sendTextToChat with empty string focuses the input)
-        log(`[sendPrompt] Step 2: Activating chat input`);
-        try {
-            await vscode.commands.executeCommand('antigravity.sendTextToChat', true, '');
-        }
-        catch {
-            // Ignore errors - this is just to focus the input
-        }
-        await sleep(200);
-        // Step 3: Copy text to clipboard
-        log(`[sendPrompt] Step 3: Copying to clipboard`);
-        await vscode.env.clipboard.writeText(text);
-        await sleep(100);
-        // Step 4: Paste from clipboard (Ctrl+V / Cmd+V)
-        log(`[sendPrompt] Step 4: Pasting from clipboard`);
-        await vscode.commands.executeCommand('editor.action.clipboardPasteAction');
-        await sleep(400);
-        // Step 4: Simulate Alt+Enter to submit
-        const workspaceName = vscode.workspace.workspaceFolders?.[0]?.name || '';
-        log(`[sendPrompt] Step 4: Sending simulateEnter to BOB (workspace: ${workspaceName})`);
-        send({
-            type: 'simulateEnter',
-            payload: { workspaceName },
-            id: `enter-${Date.now()}`
-        });
-        log(`[sendPrompt] Complete!`);
+        // Attempt: Use sendChatActionMessage to send AND submit
+        log(`[sendPrompt] Using antigravity.sendChatActionMessage`);
+        await vscode.commands.executeCommand('antigravity.sendChatActionMessage', text);
+        log(`[sendPrompt] Complete via sendChatActionMessage!`);
         markPromptSent();
         return { success: true, action: 'sendPrompt' };
     }
     catch (e) {
-        log(`[sendPrompt] FAILED: ${e}`);
+        log(`[sendPrompt] sendChatActionMessage FAILED: ${e}`);
         return {
             success: false,
             action: 'sendPrompt',
