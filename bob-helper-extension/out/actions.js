@@ -105,51 +105,45 @@ async function retryAction() {
 }
 /**
  * Send a prompt to Antigravity's chat.
- * Uses sendTextToChat to write, then asks BOB to simulate Enter key press.
+ * Uses clipboard + paste approach (more reliable than sendTextToChat)
  */
 async function sendPrompt(text) {
     const { log } = await Promise.resolve().then(() => __importStar(require('./logger')));
     const { send } = await Promise.resolve().then(() => __importStar(require('./extension')));
+    const { markPromptSent } = await Promise.resolve().then(() => __importStar(require('./stateReader')));
     log(`[sendPrompt] Starting with text: "${text.substring(0, 50)}..."`);
     try {
-        // Try sending text up to 3 times
-        let textSent = false;
-        for (let attempt = 1; attempt <= 3 && !textSent; attempt++) {
-            try {
-                log(`[sendPrompt] Attempt ${attempt}: Writing text with sendTextToChat`);
-                await vscode.commands.executeCommand('antigravity.sendTextToChat', true, text);
-                textSent = true;
-                log(`[sendPrompt] Text written successfully on attempt ${attempt}`);
-            }
-            catch (e) {
-                log(`[sendPrompt] Attempt ${attempt} failed: ${e}`);
-                if (attempt < 3) {
-                    await sleep(500);
-                }
-            }
-        }
-        if (!textSent) {
-            log(`[sendPrompt] FAILED: Could not write text after 3 attempts`);
-            return {
-                success: false,
-                action: 'sendPrompt',
-                error: 'Failed to write text to chat after 3 attempts'
-            };
-        }
-        await sleep(400);
-        // Focus the chat input
-        log(`[sendPrompt] Focusing with agentPanel.focus`);
+        // Step 1: Focus the agent panel
+        log(`[sendPrompt] Step 1: Focusing agentPanel`);
         await vscode.commands.executeCommand('antigravity.agentPanel.focus');
         await sleep(200);
-        // Ask BOB to simulate Alt+Enter to submit
+        // Step 2: Activate chat input (sendTextToChat with empty string focuses the input)
+        log(`[sendPrompt] Step 2: Activating chat input`);
+        try {
+            await vscode.commands.executeCommand('antigravity.sendTextToChat', true, '');
+        }
+        catch {
+            // Ignore errors - this is just to focus the input
+        }
+        await sleep(200);
+        // Step 3: Copy text to clipboard
+        log(`[sendPrompt] Step 3: Copying to clipboard`);
+        await vscode.env.clipboard.writeText(text);
+        await sleep(100);
+        // Step 4: Paste from clipboard (Ctrl+V / Cmd+V)
+        log(`[sendPrompt] Step 4: Pasting from clipboard`);
+        await vscode.commands.executeCommand('editor.action.clipboardPasteAction');
+        await sleep(400);
+        // Step 4: Simulate Alt+Enter to submit
         const workspaceName = vscode.workspace.workspaceFolders?.[0]?.name || '';
-        log(`[sendPrompt] Sending simulateEnter to BOB (workspace: ${workspaceName})`);
+        log(`[sendPrompt] Step 4: Sending simulateEnter to BOB (workspace: ${workspaceName})`);
         send({
             type: 'simulateEnter',
             payload: { workspaceName },
             id: `enter-${Date.now()}`
         });
         log(`[sendPrompt] Complete!`);
+        markPromptSent();
         return { success: true, action: 'sendPrompt' };
     }
     catch (e) {
