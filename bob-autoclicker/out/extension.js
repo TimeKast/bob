@@ -40,7 +40,7 @@ const vscode = __importStar(require("vscode"));
 let interval = null;
 let statusBar;
 function activate(context) {
-    console.log('BOB Auto Clicker v0.5.0 activated');
+    console.log('BOB Auto Clicker v0.6.0 activated');
     // Create clickable status bar item
     statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     statusBar.command = 'bobAutoclicker.showMenu';
@@ -61,7 +61,6 @@ async function showSettingsMenu() {
     const config = vscode.workspace.getConfiguration('bobAutoclicker');
     const enableAccept = config.get('enableAccept', true);
     const enableAcceptAll = config.get('enableAcceptAll', true);
-    const enableAllow = config.get('enableAllow', true);
     const intervalSeconds = config.get('intervalSeconds', 10);
     const items = [
         {
@@ -73,11 +72,6 @@ async function showSettingsMenu() {
             label: `$(${enableAcceptAll ? 'check' : 'circle-slash'}) Accept All`,
             description: enableAcceptAll ? 'ON - Auto-accept all changes' : 'OFF',
             detail: 'Toggle auto-accept for all file changes',
-        },
-        {
-            label: `$(${enableAllow ? 'check' : 'circle-slash'}) Allow Tools`,
-            description: enableAllow ? 'ON - Auto-allow tool permissions' : 'OFF',
-            detail: 'Toggle auto-allow for tool permission dialogs (Allow for conversation)',
         },
         {
             label: `$(clock) Interval: ${intervalSeconds}s`,
@@ -97,10 +91,6 @@ async function showSettingsMenu() {
     else if (selected.label.includes('Accept All')) {
         await config.update('enableAcceptAll', !enableAcceptAll, vscode.ConfigurationTarget.Workspace);
         vscode.window.showInformationMessage(`Accept All: ${!enableAcceptAll ? 'ON' : 'OFF'}`);
-    }
-    else if (selected.label.includes('Allow Tools')) {
-        await config.update('enableAllow', !enableAllow, vscode.ConfigurationTarget.Workspace);
-        vscode.window.showInformationMessage(`Allow Tools: ${!enableAllow ? 'ON' : 'OFF'}`);
     }
     else if (selected.label.includes('Interval')) {
         const input = await vscode.window.showInputBox({
@@ -126,13 +116,12 @@ function getConfig() {
     return {
         enableAccept: config.get('enableAccept', true),
         enableAcceptAll: config.get('enableAcceptAll', true),
-        enableAllow: config.get('enableAllow', true),
         intervalSeconds: config.get('intervalSeconds', 10),
     };
 }
 function updateState() {
     const cfg = getConfig();
-    const isActive = cfg.enableAccept || cfg.enableAcceptAll || cfg.enableAllow;
+    const isActive = cfg.enableAccept || cfg.enableAcceptAll;
     if (isActive && !interval) {
         startAutoClicker(cfg);
     }
@@ -150,8 +139,6 @@ function updateState() {
         parts.push('A');
     if (cfg.enableAcceptAll)
         parts.push('All');
-    if (cfg.enableAllow)
-        parts.push('Allow');
     if (parts.length > 0) {
         statusBar.text = `$(sync~spin) BOB [${parts.join('+')}]`;
         statusBar.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
@@ -212,16 +199,6 @@ async function tryAccept(cfg) {
             catch (e) {
                 // Silently ignore - command may not be applicable
             }
-        }
-    }
-    // Allow Tools - auto-allow permission dialogs
-    if (cfg.enableAllow) {
-        try {
-            await vscode.commands.executeCommand('antigravity.permission.allowForConversation');
-            console.log('BOB: ✓ allowForConversation');
-        }
-        catch (e) {
-            // Silently ignore - no permission dialog may be active
         }
     }
 }
