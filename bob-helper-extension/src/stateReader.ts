@@ -203,7 +203,7 @@ export class StateWatcher {
         this.onChange = onChange;
     }
 
-    start(pollMs: number = 10000): void {
+    start(pollMs: number = 3000): void {
         if (this.interval) { return; }
 
         this.interval = setInterval(async () => {

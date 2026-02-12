@@ -84,13 +84,12 @@ export async function sendSilentAction(
 }
 
 /**
- * Get the UI state from a connected extension (silent mode equivalent of detectUIState)
+ * Get the UI state from a connected extension.
+ * Reads the cached state that was pushed by the helper via stateChanged events.
+ * No active request needed — the helper proactively pushes state changes.
  */
 export async function getStateSilent(windowId: string): Promise<SilentState | null> {
     try {
-        await sendSilentAction(windowId, 'getState');
-        // The state will be pushed back and cached by the WS server
-        // We read the cached version
         const exts = await getSilentExtensions();
         const ext = exts.find(e => e.windowId === windowId);
         return ext?.state || null;
