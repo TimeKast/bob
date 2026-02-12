@@ -47,6 +47,9 @@ export interface AntigravityState {
   workspaceName: string;       // Current workspace/project name
   workspacePath: string;       // Full path to workspace root
   consecutiveErrors: number;   // Fatal errors since last successful step
+  capacityErrors: number;      // Recent 503 capacity errors (API overloaded)
+  lastActivityTimestamp: string; // ISO timestamp of last agent activity
+  messageCount: number;        // Total message count from diagnostics
 }
 
 // ─── Handshake ──────────────────────────────────────────────────────

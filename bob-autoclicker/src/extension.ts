@@ -6,18 +6,18 @@ let statusBar: vscode.StatusBarItem;
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('BOB Auto Clicker v0.4.0 activated');
-    
+
     // Create clickable status bar item
     statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     statusBar.command = 'bobAutoclicker.showMenu';
     statusBar.tooltip = 'Click to configure BOB Auto Clicker';
     context.subscriptions.push(statusBar);
-    
+
     // Register menu command
     context.subscriptions.push(
         vscode.commands.registerCommand('bobAutoclicker.showMenu', showSettingsMenu)
     );
-    
+
     // Watch for config changes
     context.subscriptions.push(
         vscode.workspace.onDidChangeConfiguration(e => {
@@ -26,7 +26,7 @@ export function activate(context: vscode.ExtensionContext) {
             }
         })
     );
-    
+
     // Initial state
     updateState();
 }
@@ -35,8 +35,9 @@ async function showSettingsMenu() {
     const config = vscode.workspace.getConfiguration('bobAutoclicker');
     const enableAccept = config.get<boolean>('enableAccept', true);
     const enableAcceptAll = config.get<boolean>('enableAcceptAll', true);
+    const enableAllow = config.get<boolean>('enableAllow', true);
     const intervalSeconds = config.get<number>('intervalSeconds', 10);
-    
+
     const items: vscode.QuickPickItem[] = [
         {
             label: `$(${enableAccept ? 'check' : 'circle-slash'}) Accept/Run`,
@@ -49,24 +50,32 @@ async function showSettingsMenu() {
             detail: 'Toggle auto-accept for all file changes',
         },
         {
+            label: `$(${enableAllow ? 'check' : 'circle-slash'}) Allow Tools`,
+            description: enableAllow ? 'ON - Auto-allow tool permissions' : 'OFF',
+            detail: 'Toggle auto-allow for tool permission dialogs (Allow for conversation)',
+        },
+        {
             label: `$(clock) Interval: ${intervalSeconds}s`,
             description: 'Change polling interval',
             detail: 'How often to attempt auto-accept (in seconds)',
         },
     ];
-    
+
     const selected = await vscode.window.showQuickPick(items, {
         placeHolder: 'BOB Auto Clicker Settings',
     });
-    
+
     if (!selected) return;
-    
+
     if (selected.label.includes('Accept/Run')) {
-        await config.update('enableAccept', !enableAccept, vscode.ConfigurationTarget.Global);
+        await config.update('enableAccept', !enableAccept, vscode.ConfigurationTarget.Workspace);
         vscode.window.showInformationMessage(`Accept/Run: ${!enableAccept ? 'ON' : 'OFF'}`);
     } else if (selected.label.includes('Accept All')) {
-        await config.update('enableAcceptAll', !enableAcceptAll, vscode.ConfigurationTarget.Global);
+        await config.update('enableAcceptAll', !enableAcceptAll, vscode.ConfigurationTarget.Workspace);
         vscode.window.showInformationMessage(`Accept All: ${!enableAcceptAll ? 'ON' : 'OFF'}`);
+    } else if (selected.label.includes('Allow Tools')) {
+        await config.update('enableAllow', !enableAllow, vscode.ConfigurationTarget.Workspace);
+        vscode.window.showInformationMessage(`Allow Tools: ${!enableAllow ? 'ON' : 'OFF'}`);
     } else if (selected.label.includes('Interval')) {
         const input = await vscode.window.showInputBox({
             prompt: 'Enter interval in seconds (1-60)',
@@ -84,7 +93,7 @@ async function showSettingsMenu() {
             vscode.window.showInformationMessage(`Interval: ${input}s`);
         }
     }
-    
+
     updateState();
 }
 
@@ -93,14 +102,15 @@ function getConfig() {
     return {
         enableAccept: config.get<boolean>('enableAccept', true),
         enableAcceptAll: config.get<boolean>('enableAcceptAll', true),
+        enableAllow: config.get<boolean>('enableAllow', true),
         intervalSeconds: config.get<number>('intervalSeconds', 10),
     };
 }
 
 function updateState() {
     const cfg = getConfig();
-    const isActive = cfg.enableAccept || cfg.enableAcceptAll;
-    
+    const isActive = cfg.enableAccept || cfg.enableAcceptAll || cfg.enableAllow;
+
     if (isActive && !interval) {
         startAutoClicker(cfg);
     } else if (!isActive && interval) {
@@ -110,12 +120,13 @@ function updateState() {
         stopAutoClicker();
         startAutoClicker(cfg);
     }
-    
+
     // Update status bar
     const parts = [];
     if (cfg.enableAccept) parts.push('A');
     if (cfg.enableAcceptAll) parts.push('All');
-    
+    if (cfg.enableAllow) parts.push('Allow');
+
     if (parts.length > 0) {
         statusBar.text = `$(sync~spin) BOB [${parts.join('+')}]`;
         statusBar.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
@@ -128,19 +139,19 @@ function updateState() {
 
 function startAutoClicker(cfg: ReturnType<typeof getConfig>) {
     console.log(`BOB Auto Clicker: STARTED (interval: ${cfg.intervalSeconds}s)`);
-    
+
     const intervalMs = cfg.intervalSeconds * 1000;
     interval = setInterval(() => {
         tryAccept(getConfig()); // Get fresh config each time
     }, intervalMs);
-    
+
     // Also try immediately
     tryAccept(cfg);
 }
 
 function stopAutoClicker() {
     console.log('BOB Auto Clicker: STOPPED');
-    
+
     if (interval) {
         clearInterval(interval);
         interval = null;
@@ -149,7 +160,7 @@ function stopAutoClicker() {
 
 async function tryAccept(cfg: ReturnType<typeof getConfig>) {
     console.log(`BOB: Attempting accept (Accept: ${cfg.enableAccept}, AcceptAll: ${cfg.enableAcceptAll})`);
-    
+
     // Accept All - just call the command
     if (cfg.enableAcceptAll) {
         try {
@@ -159,7 +170,7 @@ async function tryAccept(cfg: ReturnType<typeof getConfig>) {
             // Silently ignore
         }
     }
-    
+
     // Accept/Run - terminal and hunks
     if (cfg.enableAccept) {
         const acceptCommands = [
@@ -174,7 +185,7 @@ async function tryAccept(cfg: ReturnType<typeof getConfig>) {
             // Agent step accept
             'antigravity.agent.acceptAgentStep',
         ];
-        
+
         for (const cmd of acceptCommands) {
             try {
                 await vscode.commands.executeCommand(cmd);
@@ -182,6 +193,16 @@ async function tryAccept(cfg: ReturnType<typeof getConfig>) {
             } catch (e) {
                 // Silently ignore - command may not be applicable
             }
+        }
+    }
+
+    // Allow Tools - auto-allow permission dialogs
+    if (cfg.enableAllow) {
+        try {
+            await vscode.commands.executeCommand('antigravity.permission.allowForConversation');
+            console.log('BOB: ✓ allowForConversation');
+        } catch (e) {
+            // Silently ignore - no permission dialog may be active
         }
     }
 }

@@ -1,6 +1,7 @@
 <script lang="ts">
-  import type { Instance } from "./types";
+  import type { Instance, Settings } from "./types";
   import {
+    instances,
     testInstance,
     detectUIState,
     clickAcceptButton,
@@ -17,6 +18,8 @@
   let { instance, onToggle }: Props = $props();
   let testResult = $state<string>("");
   let testing = $state(false);
+  let showSettings = $state(false);
+  let localIssuesPath = $state(instance.issuesPath || "");
 
   const statusColors: Record<string, string> = {
     idle: "#ffb800",
@@ -43,6 +46,24 @@
     const minutes = Math.floor(seconds / 60);
     if (minutes < 60) return `${minutes}m ago`;
     return `${Math.floor(minutes / 60)}h ago`;
+  }
+
+  function saveIssuesPath() {
+    const trimmed = localIssuesPath.trim();
+    // Update instance in memory
+    instances.update((list: Instance[]) =>
+      list.map((i: Instance) =>
+        i.id === instance.id ? { ...i, issuesPath: trimmed || undefined } : i,
+      ),
+    );
+    // Persist to settings for survival across restarts
+    settings.update((s: Settings) => ({
+      ...s,
+      projectOverrides: {
+        ...s.projectOverrides,
+        [instance.projectName]: { issuesPath: trimmed || undefined },
+      },
+    }));
   }
 
   async function handleDetectUI() {
@@ -147,10 +168,19 @@
         >
       {/if}
     </div>
-    <label class="toggle">
-      <input type="checkbox" checked={instance.enabled} onchange={onToggle} />
-      <span class="slider"></span>
-    </label>
+    <div class="header-actions">
+      <button
+        class="btn-instance-settings"
+        title="Instance settings"
+        onclick={() => (showSettings = !showSettings)}
+      >
+        ⚙️
+      </button>
+      <label class="toggle">
+        <input type="checkbox" checked={instance.enabled} onchange={onToggle} />
+        <span class="slider"></span>
+      </label>
+    </div>
   </div>
 
   <div class="content">
@@ -166,6 +196,9 @@
     <div class="stats">
       <span class="stat">
         📋 {instance.currentIssue}/{instance.totalIssues} issues
+      </span>
+      <span class="stat" class:retry={instance.retryCount > 0}>
+        🔄 {instance.retryCount}/{instance.maxRetries} retries
       </span>
     </div>
 
@@ -187,6 +220,35 @@
     {#if instance.isBlocked}
       <div class="blocked-indicator">
         🚫 Bloqueado: {instance.blockReason || "Requiere atención manual"}
+      </div>
+    {:else if instance.blockReason}
+      <div class="blocked-indicator warning">
+        ⏳ {instance.blockReason}
+      </div>
+    {/if}
+
+    {#if showSettings}
+      <div class="instance-settings">
+        <div class="field">
+          <label for="issuesPath-{instance.id}">📂 Issues Path (override)</label
+          >
+          <div class="path-input-row">
+            <input
+              type="text"
+              id="issuesPath-{instance.id}"
+              bind:value={localIssuesPath}
+              placeholder="Auto-detect from project"
+              onblur={saveIssuesPath}
+            />
+          </div>
+          <span class="hint">
+            {#if instance.issuesPath}
+              Usando: {instance.issuesPath}
+            {:else}
+              Auto-detectando desde {instance.projectPath}
+            {/if}
+          </span>
+        </div>
       </div>
     {/if}
   </div>
@@ -397,6 +459,77 @@
     font-size: 0.8rem;
     color: #ff6b35;
     margin-top: 0.5rem;
+  }
+
+  .blocked-indicator.warning {
+    background: rgba(255, 193, 7, 0.15);
+    border-color: rgba(255, 193, 7, 0.3);
+    color: #ffc107;
+  }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .btn-instance-settings {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 0.8rem;
+    padding: 0.2rem;
+    opacity: 0.5;
+    transition: opacity 0.2s;
+  }
+
+  .btn-instance-settings:hover {
+    opacity: 1;
+  }
+
+  .instance-settings {
+    margin-top: 0.5rem;
+    padding: 0.75rem;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .instance-settings .field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  .instance-settings label {
+    font-size: 0.75rem;
+    opacity: 0.7;
+  }
+
+  .instance-settings input {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    padding: 0.5rem;
+    color: #fff;
+    font-size: 0.8rem;
+    width: 100%;
+  }
+
+  .instance-settings input:focus {
+    outline: none;
+    border-color: #00d9ff;
+  }
+
+  .instance-settings .hint {
+    font-size: 0.7rem;
+    opacity: 0.4;
+    font-style: italic;
+  }
+
+  .path-input-row {
+    display: flex;
+    gap: 0.5rem;
   }
 
   .silent-badge {

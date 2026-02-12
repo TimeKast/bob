@@ -67,6 +67,22 @@
         >
       </div>
 
+      <div class="field">
+        <label for="promptDelay">Delay entre prompts (segundos)</label>
+        <input
+          type="number"
+          id="promptDelay"
+          bind:value={localSettings.promptSendDelaySeconds}
+          min="1"
+          max="60"
+          step="1"
+        />
+        <span class="hint"
+          >Tiempo de espera después de enviar un prompt para evitar encolamiento
+          (default: 5)</span
+        >
+      </div>
+
       <div class="section-header">⚙️ General</div>
 
       <div class="field">

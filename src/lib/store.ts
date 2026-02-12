@@ -26,11 +26,14 @@ const defaultSettings: Settings = {
         '✅ BACKLOG COMPLETADO'
     ],
     inactivityTimeoutMinutes: 20,  // Stop project if no prompt sent in 20 minutes
+    promptSendDelaySeconds: 5,  // Wait after sending prompt before next action
     // Logging settings
     loggingEnabled: true,
     logFilePath: '',  // Empty = use default location (app data dir)
     // Silent mode
-    silentModePreferred: true  // If true, prefer silent mode when extension is connected
+    silentModePreferred: true,  // If true, prefer silent mode when extension is connected
+    // Per-project overrides
+    projectOverrides: {}  // { projectName: { issuesPath?: string } }
 };
 
 // Load settings from localStorage
@@ -56,7 +59,15 @@ function createSettingsStore() {
             }
             set(value);
         },
-        update
+        update: (updater: (value: Settings) => Settings) => {
+            update((current) => {
+                const newValue = updater(current);
+                if (typeof window !== 'undefined' && window.localStorage) {
+                    localStorage.setItem('bob-settings', JSON.stringify(newValue));
+                }
+                return newValue;
+            });
+        }
     };
 }
 
@@ -67,7 +78,7 @@ export const log = {
     async write(level: string, message: string): Promise<void> {
         const currentSettings = get(settings);
         if (!currentSettings.loggingEnabled) return;
-        
+
         try {
             await invoke('write_log', {
                 logPath: currentSettings.logFilePath,
@@ -100,9 +111,9 @@ export async function scanForInstances(): Promise<void> {
         const newInstances: Instance[] = silentExtensions.map((ext) => {
             // Use workspacePath from extension, with windowId as handle
             const windowHandle = parseInt(ext.windowId.replace(/\D/g, '')) || Date.now();
-            
+
             // Check if this instance already exists (by workspace name)
-            const existing = currentInstances.find(i => 
+            const existing = currentInstances.find(i =>
                 i.projectName.toLowerCase() === ext.workspaceName.toLowerCase()
             );
 
@@ -117,6 +128,8 @@ export async function scanForInstances(): Promise<void> {
             }
 
             // Create new instance from silent extension
+            const currentSettings = get(settings);
+            const override = currentSettings.projectOverrides?.[ext.workspaceName];
             return {
                 id: `instance-${ext.windowId}`,
                 windowTitle: `${ext.workspaceName} - Antigravity`,
@@ -128,17 +141,19 @@ export async function scanForInstances(): Promise<void> {
                 totalIssues: 0,
                 retryCount: 0,
                 maxRetries: get(settings).maxRetries,
-                status: ext.state?.agentWorking ? 'working' 
-                      : ((ext.state?.consecutiveErrors ?? 0) > 0) ? 'error' : 'idle',
+                status: ext.state?.agentWorking ? 'working'
+                    : ((ext.state?.consecutiveErrors ?? 0) > 0) ? 'error' : 'idle',
                 lastActivity: Date.now(),
                 stepCount: 0,
                 connectionMode: 'silent' as const,
                 silentWindowId: ext.windowId,
+                // Apply persisted overrides
+                issuesPath: override?.issuesPath,
             };
         });
 
         instances.set(newInstances);
-        
+
         // Update backlog info for each instance (wait for it to complete)
         await updateInstanceBacklogs();
     } catch (error) {
@@ -185,20 +200,27 @@ export async function scanForInstances(): Promise<void> {
 export async function updateInstanceBacklogs(): Promise<void> {
     const currentInstances = get(instances);
     console.log(`[Backlog] Updating ${currentInstances.length} instances...`);
-    
+
     for (const instance of currentInstances) {
         try {
-            console.log(`[${instance.projectName}] Reading backlog from: ${instance.projectPath}`);
-            
-            const backlog = await invoke<{
-                totalIssues: number;
-                completedIssues: number;
-                currentIssue: string;
-                error?: string;
-            }>('read_backlog', { projectPath: instance.projectPath });
-            
+            console.log(`[${instance.projectName}] Reading backlog from: ${instance.issuesPath || instance.projectPath}`);
+
+            const backlog = instance.issuesPath
+                ? await invoke<{
+                    totalIssues: number;
+                    completedIssues: number;
+                    currentIssue: string;
+                    error?: string;
+                }>('read_backlog_direct', { issuesPath: instance.issuesPath })
+                : await invoke<{
+                    totalIssues: number;
+                    completedIssues: number;
+                    currentIssue: string;
+                    error?: string;
+                }>('read_backlog', { projectPath: instance.projectPath });
+
             console.log(`[${instance.projectName}] Backlog result:`, backlog);
-            
+
             if (backlog && !backlog.error) {
                 instances.update(list =>
                     list.map(i => i.id === instance.id
@@ -273,8 +295,8 @@ export async function refreshInstances(): Promise<void> {
             // Don't overwrite fields managed by polling (stepCount, retryCount, backlog fields)
             // Only update status and lastActivity from get_instance_status
             instances.update(list =>
-                list.map(i => i.id === instance.id ? { 
-                    ...i, 
+                list.map(i => i.id === instance.id ? {
+                    ...i,
                     status: status.status,
                     lastActivity: status.lastActivity
                     // NOT including: stepCount, retryCount, totalIssues, currentIssue, issuesCompleted
@@ -610,9 +632,9 @@ export async function sendAutoPrompt(instanceId: string): Promise<string> {
         if (success) {
             instances.update(list =>
                 list.map(i => i.id === instanceId
-                    ? { 
-                        ...i, 
-                        lastActivity: Date.now(), 
+                    ? {
+                        ...i,
+                        lastActivity: Date.now(),
                         stepCount: i.stepCount + 1,
                         status: 'working' as const
                     }
@@ -639,10 +661,10 @@ async function notifyStopCondition(instance: Instance, condition: string): Promi
     if (!shouldNotify) return;
 
     try {
-        const title = isComplete 
+        const title = isComplete
             ? `✅ ${instance.projectName} - Backlog Completado`
             : `⚠️ ${instance.projectName} - Requiere Atención`;
-        
+
         const message = isComplete
             ? `El backlog ha sido completado exitosamente. Issues completados: ${instance.issuesCompleted || 0}`
             : `Condición detectada: ${condition}. Requiere intervención manual.`;
@@ -657,40 +679,60 @@ async function notifyStopCondition(instance: Instance, condition: string): Promi
     }
 }
 
+// Generic Discord notification helper for any block/error case
+async function notifyDiscordGeneric(instance: Instance, title: string, message: string): Promise<void> {
+    const currentSettings = get(settings);
+    if (!currentSettings.discordWebhook || !currentSettings.notifyOnError) return;
+
+    try {
+        await invoke('notify_discord', {
+            webhookUrl: currentSettings.discordWebhook,
+            title,
+            message
+        });
+        console.log(`[${instance.projectName}] Discord notification sent: ${title}`);
+    } catch (e) {
+        console.error(`[${instance.projectName}] Failed to send Discord notification:`, e);
+    }
+}
+
+// Track last time we notified about no-connection per instance to avoid spam
+const lastNoConnectionNotified: Map<string, number> = new Map();
+
 // Enhanced UI polling with stop condition detection - using recursive setTimeout to prevent overlap
 let pollingTimeout: ReturnType<typeof setTimeout> | null = null;
 
 async function pollOnce(): Promise<void> {
     const currentSettings = get(settings);
-    
+
     // ========== UPDATE SILENT MODE CONNECTIONS ==========
     // Check for newly connected extensions before processing instances
     // This ensures we detect extensions that connect after the initial scan
     await updateSilentModeConnections();
-    
+
     // Get fresh instance list after connection update
     const currentInstances = get(instances);
-    
+
     for (const instance of currentInstances) {
         if (!pollingActive) break; // Check if stopped
         if (!instance.enabled || instance.isBlocked) continue;
-        
+
         // ========== INACTIVITY TIMEOUT CHECK ==========
         // If no prompt sent in X minutes, stop project and notify Discord
         const inactivityMs = currentSettings.inactivityTimeoutMinutes * 60 * 1000;
         const lastPrompt = instance.lastPromptSent || 0;
         const timeSinceLastPrompt = Date.now() - lastPrompt;
-        
+
         if (lastPrompt > 0 && timeSinceLastPrompt > inactivityMs) {
             const minutesInactive = Math.round(timeSinceLastPrompt / 60000);
             console.log(`[${instance.projectName}] ⏰ Inactivity timeout: ${minutesInactive} minutes since last prompt`);
-            
+
             // Disable the instance
             instances.update(list =>
                 list.map(i => i.id === instance.id
-                    ? { 
-                        ...i, 
-                        enabled: false, 
+                    ? {
+                        ...i,
+                        enabled: false,
                         status: 'error' as const,
                         isBlocked: true,
                         blockReason: `Inactivity timeout: ${minutesInactive} min`
@@ -698,7 +740,7 @@ async function pollOnce(): Promise<void> {
                     : i
                 )
             );
-            
+
             // Send Discord notification
             if (currentSettings.discordWebhook && currentSettings.notifyOnError) {
                 try {
@@ -712,30 +754,37 @@ async function pollOnce(): Promise<void> {
                     console.error(`[${instance.projectName}] Failed to send inactivity notification:`, e);
                 }
             }
-            
+
             continue; // Skip further processing for this instance
         }
-        
+
         // Update backlog for this instance on every poll (with timeout)
         try {
             const backlogTimeout = new Promise<null>((_, reject) =>
                 setTimeout(() => reject(new Error('Backlog timeout')), 5000)
             );
-            
-            const backlogPromise = invoke<{
-                totalIssues: number;
-                completedIssues: number;
-                currentIssue: string;
-                error?: string;
-            }>('read_backlog', { projectPath: instance.projectPath });
-            
+
+            const backlogPromise = instance.issuesPath
+                ? invoke<{
+                    totalIssues: number;
+                    completedIssues: number;
+                    currentIssue: string;
+                    error?: string;
+                }>('read_backlog_direct', { issuesPath: instance.issuesPath })
+                : invoke<{
+                    totalIssues: number;
+                    completedIssues: number;
+                    currentIssue: string;
+                    error?: string;
+                }>('read_backlog', { projectPath: instance.projectPath });
+
             const backlog = await Promise.race([backlogPromise, backlogTimeout]) as {
                 totalIssues: number;
                 completedIssues: number;
                 currentIssue: string;
                 error?: string;
             } | null;
-            
+
             if (backlog && !backlog.error) {
                 instances.update(list =>
                     list.map(i => i.id === instance.id
@@ -748,18 +797,18 @@ async function pollOnce(): Promise<void> {
                         : i
                     )
                 );
-                
+
                 // ========== CHECK FOR PROJECT COMPLETION ==========
                 // If all issues are completed, disable and notify
                 if (backlog.totalIssues > 0 && backlog.completedIssues >= backlog.totalIssues) {
                     console.log(`[${instance.projectName}] 🎉 All issues completed (${backlog.completedIssues}/${backlog.totalIssues})`);
-                    
+
                     // Update instance to disabled and completed
                     instances.update(list =>
                         list.map(i => i.id === instance.id
-                            ? { 
-                                ...i, 
-                                enabled: false, 
+                            ? {
+                                ...i,
+                                enabled: false,
                                 status: 'complete' as const,
                                 isBlocked: true,
                                 blockReason: 'All issues completed'
@@ -767,7 +816,7 @@ async function pollOnce(): Promise<void> {
                             : i
                         )
                     );
-                    
+
                     // Send Discord notification
                     if (currentSettings.discordWebhook && currentSettings.notifyOnComplete) {
                         try {
@@ -781,14 +830,14 @@ async function pollOnce(): Promise<void> {
                             console.error(`[${instance.projectName}] Failed to send completion notification:`, e);
                         }
                     }
-                    
+
                     continue; // Skip further processing for this instance
                 }
             }
         } catch (e) {
             // Ignore backlog read errors, continue with detection
         }
-        
+
         // ========== SILENT MODE PATH ==========
         // If companion extension is connected, use WebSocket instead of pixel scanning
         if (instance.connectionMode === 'silent' && instance.silentWindowId) {
@@ -798,6 +847,37 @@ async function pollOnce(): Promise<void> {
 
                 if (!silentState) {
                     console.log(`[${instance.projectName}] 🔇 Silent: no state yet, waiting...`);
+                    continue;
+                }
+
+                // ========== CONSECUTIVE ERRORS (FATAL) CHECK ==========
+                if (silentState.consecutiveErrors && silentState.consecutiveErrors >= currentSettings.maxRetries) {
+                    console.log(`[${instance.projectName}] 💀 Fatal: ${silentState.consecutiveErrors} consecutive errors detected by diagnostics`);
+                    instances.update(list =>
+                        list.map(i => i.id === instance.id
+                            ? { ...i, isBlocked: true, blockReason: `${silentState.consecutiveErrors} errores consecutivos (fatal)`, status: 'error' as const, enabled: false }
+                            : i
+                        )
+                    );
+                    await notifyDiscordGeneric(
+                        instance,
+                        `💀 ${instance.projectName} - Errores Consecutivos`,
+                        `Se detectaron ${silentState.consecutiveErrors} errores consecutivos via diagnósticos. El proyecto ha sido deshabilitado.`
+                    );
+                    continue;
+                }
+
+                // ========== 503 CAPACITY ERROR CHECK ==========
+                // If API is returning 503s, agent is waiting (not stuck)
+                if (silentState.capacityErrors && silentState.capacityErrors > 0) {
+                    console.log(`[${instance.projectName}] ⏳ API capacity: ${silentState.capacityErrors} recent 503 errors`);
+                    instances.update(list =>
+                        list.map(i => i.id === instance.id
+                            ? { ...i, status: 'working' as const, blockReason: `Waiting for API capacity (${silentState.capacityErrors} x 503)`, lastActivity: Date.now() }
+                            : i
+                        )
+                    );
+                    // Don't count this toward inactivity — agent is trying but API is saturated
                     continue;
                 }
 
@@ -856,17 +936,23 @@ async function pollOnce(): Promise<void> {
                 // Chat ready — send prompt
                 if (silentState.hasEnterButton && !silentState.agentWorking) {
                     // Cooldown: Don't send another prompt if we sent one recently
-                    const promptCooldownMs = 30000; // 30 seconds
+                    const promptCooldownMs = currentSettings.promptSendDelaySeconds * 1000;
                     const timeSinceLastPrompt = Date.now() - (instance.lastPromptSent || 0);
-                    
+
                     if (timeSinceLastPrompt < promptCooldownMs) {
                         console.log(`[${instance.projectName}] ⏳ Cooldown: waiting ${Math.ceil((promptCooldownMs - timeSinceLastPrompt) / 1000)}s before next prompt`);
                         continue;
                     }
-                    
+
                     const prompt = instance.customPrompt || currentSettings.autoPrompt;
                     console.log(`[${instance.projectName}] 🔇 Sending prompt: "${prompt.substring(0, 50)}..."`);
                     await sendPromptSilent(instance.silentWindowId, prompt);
+
+                    // Delay after sending prompt to prevent queuing if Enter doesn't execute
+                    const sendDelayMs = currentSettings.promptSendDelaySeconds * 1000;
+                    console.log(`[${instance.projectName}] ⏳ Waiting ${currentSettings.promptSendDelaySeconds}s after prompt send...`);
+                    await new Promise(r => setTimeout(r, sendDelayMs));
+
                     instances.update(list =>
                         list.map(i => i.id === instance.id
                             ? {
@@ -883,9 +969,19 @@ async function pollOnce(): Promise<void> {
                     continue;
                 }
 
-                // Agent working, nothing to do
+                // Agent working, nothing to do — but update activity timestamp from diagnostics
                 if (silentState.agentWorking) {
-                    console.log(`[${instance.projectName}] 🔇 Agent working - waiting...`);
+                    console.log(`[${instance.projectName}] 🔇 Agent working - messages: ${silentState.messageCount || '?'}`);
+                    // Use the activity timestamp from diagnostics if available
+                    const activityTime = silentState.lastActivityTimestamp
+                        ? new Date(silentState.lastActivityTimestamp).getTime()
+                        : Date.now();
+                    instances.update(list =>
+                        list.map(i => i.id === instance.id
+                            ? { ...i, lastActivity: activityTime, status: 'working' as const, blockReason: undefined }
+                            : i
+                        )
+                    );
                 }
                 continue;
 
@@ -904,21 +1000,32 @@ async function pollOnce(): Promise<void> {
                 : i
             )
         );
+
+        // Notify Discord once about missing connection (throttled to avoid spam, once per hour)
+        const lastNotified = lastNoConnectionNotified.get(instance.id) || 0;
+        if (Date.now() - lastNotified > 3600000) {
+            lastNoConnectionNotified.set(instance.id, Date.now());
+            await notifyDiscordGeneric(
+                instance,
+                `🔌 ${instance.projectName} - Sin Conexión`,
+                `No se detecta la extensión bob-helper. Instala la extensión en Antigravity para que BOB pueda controlar esta instancia.`
+            );
+        }
     }
 }
 
 function scheduleNextPoll(intervalMs: number): void {
     if (!pollingActive) return;
-    
+
     pollingTimeout = setTimeout(async () => {
         if (!pollingActive) return;
-        
+
         try {
             await pollOnce();
         } catch (error) {
             console.error('Poll cycle error:', error);
         }
-        
+
         // Schedule next poll
         scheduleNextPoll(intervalMs);
     }, intervalMs);
@@ -932,13 +1039,13 @@ export function startAutoImplementation(intervalMs?: number): void {
         console.log('Polling already active');
         return;
     }
-    
+
     pollingActive = true;
     console.log(`Starting auto-implementation polling every ${pollInterval}ms`);
-    
+
     // Update backlog info immediately when starting
     updateInstanceBacklogs();
-    
+
     // Setup periodic backlog refresh (every 15 minutes)
     const backlogRefreshInterval = setInterval(() => {
         if (pollingActive) {
@@ -948,7 +1055,7 @@ export function startAutoImplementation(intervalMs?: number): void {
             clearInterval(backlogRefreshInterval);
         }
     }, 15 * 60 * 1000); // 15 minutes
-    
+
     // Start first poll immediately, then schedule subsequent ones
     pollOnce().then(() => {
         scheduleNextPoll(pollInterval);

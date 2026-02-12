@@ -7,8 +7,12 @@
     "engines": {
         "vscode": "^1.85.0"
     },
-    "categories": ["Other"],
-    "activationEvents": ["onStartupFinished"],
+    "categories": [
+        "Other"
+    ],
+    "activationEvents": [
+        "onStartupFinished"
+    ],
     "main": "./out/extension.js",
     "contributes": {
         "commands": [
@@ -30,9 +34,14 @@
                     "default": true,
                     "description": "Auto-accept all file changes"
                 },
+                "bobAutoclicker.enableAllow": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Auto-allow tool permission dialogs (Allow for conversation)"
+                },
                 "bobAutoclicker.intervalSeconds": {
                     "type": "number",
-                    "default": 10,
+                    "default": 3,
                     "minimum": 1,
                     "maximum": 60,
                     "description": "Seconds between accept attempts"

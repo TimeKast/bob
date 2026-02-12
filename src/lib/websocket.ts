@@ -22,6 +22,9 @@ export interface SilentState {
     workspaceName: string;
     workspacePath: string;  // Full path to workspace root
     consecutiveErrors: number;  // Fatal errors since last successful step
+    capacityErrors: number;     // Recent 503 capacity errors
+    lastActivityTimestamp: string; // ISO timestamp of last agent activity
+    messageCount: number;       // Total message count from diagnostics
 }
 
 // ─── Extension Discovery ───────────────────────────────────────────
@@ -51,7 +54,7 @@ export function matchExtensionToInstance(
     for (const ext of extensions) {
         console.log(`[Silent]   - Extension: "${ext.workspaceName}" vs Instance: "${instance.projectName}" → ${ext.workspaceName.toLowerCase() === instance.projectName.toLowerCase() ? '✅ MATCH' : '❌ no match'}`);
     }
-    
+
     // Match by project name
     return extensions.find(ext =>
         ext.workspaceName.toLowerCase() === instance.projectName.toLowerCase()

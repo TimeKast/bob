@@ -311,6 +311,81 @@ fn find_issues_dir(backlog_base: &std::path::Path) -> Option<std::path::PathBuf>
     None
 }
 
+/// Read backlog directly from a specific issues directory path (no auto-discovery)
+#[tauri::command]
+fn read_backlog_direct(_app: tauri::AppHandle, issues_path: String) -> Result<BacklogResult, String> {
+    use std::fs;
+    use std::path::Path;
+
+    let issues_path = Path::new(&issues_path);
+
+    if !issues_path.exists() {
+        return Ok(BacklogResult {
+            total_issues: 0,
+            completed_issues: 0,
+            current_issue: String::new(),
+            backlog_path: issues_path.to_string_lossy().to_string(),
+            error: Some(format!("Issues path does not exist: {:?}", issues_path)),
+        });
+    }
+
+    let mut total_issues = 0;
+    let mut completed_issues = 0;
+    let mut first_incomplete: Option<String> = None;
+
+    if let Ok(entries) = fs::read_dir(issues_path) {
+        let mut files: Vec<_> = entries
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().map(|ext| ext == "md").unwrap_or(false))
+            .collect();
+
+        files.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+
+        for entry in files {
+            total_issues += 1;
+            let path = entry.path();
+
+            if let Ok(content) = fs::read_to_string(&path) {
+                let is_done = content.contains("Status:")
+                    && (content.to_lowercase().contains("done")
+                        || content.contains("Completado")
+                        || content.contains("Complete")
+                        || content.contains("✅")
+                        || content.contains("Hecho")
+                        || content.contains("Terminado"));
+
+                if is_done {
+                    completed_issues += 1;
+                } else if first_incomplete.is_none() {
+                    if let Some(name) = path.file_stem() {
+                        let name = name.to_string_lossy();
+                        let re_match: Vec<&str> = name
+                            .split(|c: char| !c.is_alphanumeric() && c != '-')
+                            .collect();
+                        if !re_match.is_empty() {
+                            first_incomplete = Some(re_match[0].to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(BacklogResult {
+        total_issues,
+        completed_issues,
+        current_issue: first_incomplete.unwrap_or_else(|| {
+            if total_issues > 0 && completed_issues == total_issues {
+                "DONE".to_string()
+            } else {
+                String::new()
+            }
+        }),
+        backlog_path: issues_path.to_string_lossy().to_string(),
+        error: None,
+    })
+}
+
 /// Send a notification to Discord webhook
 #[tauri::command]
 async fn notify_discord(webhook_url: String, title: String, message: String) -> Result<(), String> {
@@ -522,6 +597,7 @@ pub fn run() {
             write_to_chat,
             // Cross-platform functions
             read_backlog,
+            read_backlog_direct,
             write_log,
             notify_discord,
             // Silent Mode

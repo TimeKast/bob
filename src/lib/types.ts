@@ -26,6 +26,8 @@ export interface Instance {
     // Silent mode fields
     connectionMode?: 'silent' | 'legacy';  // 'silent' = via companion extension, 'legacy' = via PowerShell
     silentWindowId?: string;  // WebSocket window ID of companion extension
+    // Per-instance settings
+    issuesPath?: string;  // Custom path to issues directory (overrides auto-detection)
 }
 
 export interface Settings {
@@ -41,11 +43,14 @@ export interface Settings {
     pollIntervalSeconds: number;
     stopConditions: string[];
     inactivityTimeoutMinutes: number;  // Minutes before stopping inactive project (default 20)
+    promptSendDelaySeconds: number;  // Delay after sending prompt before next action (default 5)
     // Logging settings
     loggingEnabled: boolean;
     logFilePath: string;  // Path to log file (e.g., "C:/logs/antigravity.log")
     // Silent mode
     silentModePreferred: boolean;  // If true, prefer silent mode when extension is connected
+    // Per-project overrides (persisted across restarts)
+    projectOverrides: Record<string, { issuesPath?: string }>;
 }
 
 export interface ScanResult {
