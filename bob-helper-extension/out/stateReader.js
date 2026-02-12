@@ -95,6 +95,7 @@ async function readAntigravityState() {
         capacityErrors,
         lastActivityTimestamp,
         messageCount,
+        currentStepIndex,
     };
 }
 /**

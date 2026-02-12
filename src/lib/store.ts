@@ -935,16 +935,44 @@ async function pollOnce(): Promise<void> {
 
                 // Chat ready — send prompt
                 if (silentState.hasEnterButton && !silentState.agentWorking) {
-                    // Cooldown: Don't send another prompt if we sent one recently
-                    const promptCooldownMs = currentSettings.promptSendDelaySeconds * 1000;
+                    // Exponential backoff cooldowns: 1st=15s, 2nd=180s(3min), 3rd=900s(15min)
+                    const BACKOFF_SECONDS = [15, 180, 900];
+
+                    // Check if step has advanced since last prompt
+                    const currentStep = silentState.currentStepIndex || 0;
+                    const stepAdvanced = instance.stepIndexAtLastPrompt === undefined ||
+                        currentStep !== instance.stepIndexAtLastPrompt;
+
+                    // Determine cooldown based on no-advance count
+                    const noAdvanceCount = stepAdvanced ? 0 : (instance.noAdvanceCount || 0);
+                    const cooldownIndex = Math.min(noAdvanceCount, BACKOFF_SECONDS.length - 1);
+                    const promptCooldownMs = BACKOFF_SECONDS[cooldownIndex] * 1000;
                     const timeSinceLastPrompt = Date.now() - (instance.lastPromptSent || 0);
 
                     if (timeSinceLastPrompt < promptCooldownMs) {
-                        console.log(`[${instance.projectName}] ⏳ Cooldown: waiting ${Math.ceil((promptCooldownMs - timeSinceLastPrompt) / 1000)}s before next prompt`);
+                        console.log(`[${instance.projectName}] ⏳ Cooldown: waiting ${Math.ceil((promptCooldownMs - timeSinceLastPrompt) / 1000)}s (backoff level ${noAdvanceCount})`);
+                        continue;
+                    }
+
+                    // If no advancement after all retries, block the instance
+                    if (!stepAdvanced && noAdvanceCount >= BACKOFF_SECONDS.length) {
+                        console.log(`[${instance.projectName}] 🛑 No step advancement after ${noAdvanceCount} retries — blocking`);
+                        instances.update(list =>
+                            list.map(i => i.id === instance.id
+                                ? { ...i, isBlocked: true, blockReason: 'No step advancement after retries', status: 'error' as const, enabled: false }
+                                : i
+                            )
+                        );
+                        await notifyStopCondition(instance, `No step advancement after ${noAdvanceCount} retries`);
                         continue;
                     }
 
                     const prompt = instance.customPrompt || currentSettings.autoPrompt;
+                    const newNoAdvanceCount = stepAdvanced ? 0 : noAdvanceCount + 1;
+
+                    if (newNoAdvanceCount > 0) {
+                        console.log(`[${instance.projectName}] ⚠️ No step advancement (retry ${newNoAdvanceCount}/${BACKOFF_SECONDS.length})`);
+                    }
                     console.log(`[${instance.projectName}] 🔇 Sending prompt: "${prompt.substring(0, 50)}..."`);
 
                     // Set lastPromptSent BEFORE sending so cooldown starts from actual send time
@@ -955,6 +983,8 @@ async function pollOnce(): Promise<void> {
                                 ...i,
                                 lastActivity: sendTimestamp,
                                 lastPromptSent: sendTimestamp,
+                                stepIndexAtLastPrompt: currentStep,
+                                noAdvanceCount: newNoAdvanceCount,
                                 stepCount: i.stepCount + 1,
                                 retryCount: 0,
                                 status: 'working' as const

@@ -50,6 +50,7 @@ export interface AntigravityState {
   capacityErrors: number;      // Recent 503 capacity errors (API overloaded)
   lastActivityTimestamp: string; // ISO timestamp of last agent activity
   messageCount: number;        // Total message count from diagnostics
+  currentStepIndex: number;    // Current step index from getDiagnostics
 }
 
 // ─── Handshake ──────────────────────────────────────────────────────

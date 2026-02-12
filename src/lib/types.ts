@@ -23,6 +23,8 @@ export interface Instance {
     blockReason?: string;
     issuesCompleted?: number;
     lastPromptSent?: number;  // Timestamp of last prompt sent (for inactivity timeout)
+    stepIndexAtLastPrompt?: number;  // Step index when last prompt was sent
+    noAdvanceCount?: number;  // How many times we detected idle without step advancement
     // Silent mode fields
     connectionMode?: 'silent' | 'legacy';  // 'silent' = via companion extension, 'legacy' = via PowerShell
     silentWindowId?: string;  // WebSocket window ID of companion extension

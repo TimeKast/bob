@@ -25,6 +25,7 @@ export interface SilentState {
     capacityErrors: number;     // Recent 503 capacity errors
     lastActivityTimestamp: string; // ISO timestamp of last agent activity
     messageCount: number;       // Total message count from diagnostics
+    currentStepIndex: number;   // Current step index from getDiagnostics
 }
 
 // ─── Extension Discovery ───────────────────────────────────────────

@@ -69,6 +69,7 @@ export async function readAntigravityState(): Promise<AntigravityState> {
         capacityErrors,
         lastActivityTimestamp,
         messageCount,
+        currentStepIndex,
     };
 }
 
