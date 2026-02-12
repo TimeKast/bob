@@ -5,7 +5,7 @@ let interval: NodeJS.Timeout | null = null;
 let statusBar: vscode.StatusBarItem;
 
 export function activate(context: vscode.ExtensionContext) {
-    console.log('BOB Auto Clicker v0.4.0 activated');
+    console.log('BOB Auto Clicker v0.5.0 activated');
 
     // Create clickable status bar item
     statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);

@@ -26,7 +26,7 @@ const defaultSettings: Settings = {
         '✅ BACKLOG COMPLETADO'
     ],
     inactivityTimeoutMinutes: 20,  // Stop project if no prompt sent in 20 minutes
-    promptSendDelaySeconds: 5,  // Wait after sending prompt before next action
+    promptSendDelaySeconds: 15,  // Cooldown after sending prompt before allowing next send
     // Logging settings
     loggingEnabled: true,
     logFilePath: '',  // Empty = use default location (app data dir)
@@ -946,19 +946,15 @@ async function pollOnce(): Promise<void> {
 
                     const prompt = instance.customPrompt || currentSettings.autoPrompt;
                     console.log(`[${instance.projectName}] 🔇 Sending prompt: "${prompt.substring(0, 50)}..."`);
-                    await sendPromptSilent(instance.silentWindowId, prompt);
 
-                    // Delay after sending prompt to prevent queuing if Enter doesn't execute
-                    const sendDelayMs = currentSettings.promptSendDelaySeconds * 1000;
-                    console.log(`[${instance.projectName}] ⏳ Waiting ${currentSettings.promptSendDelaySeconds}s after prompt send...`);
-                    await new Promise(r => setTimeout(r, sendDelayMs));
-
+                    // Set lastPromptSent BEFORE sending so cooldown starts from actual send time
+                    const sendTimestamp = Date.now();
                     instances.update(list =>
                         list.map(i => i.id === instance.id
                             ? {
                                 ...i,
-                                lastActivity: Date.now(),
-                                lastPromptSent: Date.now(),
+                                lastActivity: sendTimestamp,
+                                lastPromptSent: sendTimestamp,
                                 stepCount: i.stepCount + 1,
                                 retryCount: 0,
                                 status: 'working' as const
@@ -966,6 +962,8 @@ async function pollOnce(): Promise<void> {
                             : i
                         )
                     );
+
+                    await sendPromptSilent(instance.silentWindowId, prompt);
                     continue;
                 }
 
