@@ -216,13 +216,14 @@ fn read_backlog(_app: tauri::AppHandle, project_path: String) -> Result<BacklogR
             let path = entry.path();
 
             if let Ok(content) = fs::read_to_string(&path) {
-                let is_done = content.contains("Status:")
-                    && (content.to_lowercase().contains("done")
-                        || content.contains("Completado")
-                        || content.contains("Complete")
+                let lower = content.to_lowercase();
+                let is_done = lower.contains("status:")
+                    && (lower.contains("done")
+                        || lower.contains("completado")
+                        || lower.contains("complete")
                         || content.contains("✅")
-                        || content.contains("Hecho")
-                        || content.contains("Terminado"));
+                        || lower.contains("hecho")
+                        || lower.contains("terminado"));
 
                 if is_done {
                     completed_issues += 1;
@@ -346,13 +347,14 @@ fn read_backlog_direct(_app: tauri::AppHandle, issues_path: String) -> Result<Ba
             let path = entry.path();
 
             if let Ok(content) = fs::read_to_string(&path) {
-                let is_done = content.contains("Status:")
-                    && (content.to_lowercase().contains("done")
-                        || content.contains("Completado")
-                        || content.contains("Complete")
+                let lower = content.to_lowercase();
+                let is_done = lower.contains("status:")
+                    && (lower.contains("done")
+                        || lower.contains("completado")
+                        || lower.contains("complete")
                         || content.contains("✅")
-                        || content.contains("Hecho")
-                        || content.contains("Terminado"));
+                        || lower.contains("hecho")
+                        || lower.contains("terminado"));
 
                 if is_done {
                     completed_issues += 1;
