@@ -3792,7 +3792,7 @@ function markPromptSent() {
 async function readAntigravityState() {
   const workspaceName = vscode.workspace.workspaceFolders?.[0]?.name || "unknown";
   const workspacePath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || "";
-  const { agentWorking, currentStepIndex, consecutiveErrors } = await checkAgentWorkingState();
+  const { agentWorking, currentStepIndex, consecutiveErrors, capacityErrors, lastActivityTimestamp, messageCount } = await checkAgentWorkingState();
   const hasEnterButton = !agentWorking;
   if (lastAgentWorking === null || agentWorking !== lastAgentWorking) {
     const errStr = consecutiveErrors > 0 ? ` \u274C errors: ${consecutiveErrors}` : "";
@@ -3810,16 +3810,23 @@ async function readAntigravityState() {
     terminalPending,
     workspaceName,
     workspacePath,
-    consecutiveErrors
+    consecutiveErrors,
+    capacityErrors,
+    lastActivityTimestamp,
+    messageCount,
+    currentStepIndex
   };
 }
 async function checkAgentWorkingState() {
   try {
     const result = await vscode.commands.executeCommand("antigravity.getDiagnostics");
     if (!result || typeof result !== "string") {
-      return { agentWorking: false, currentStepIndex: -1, consecutiveErrors: lastConsecutiveErrors };
+      return { agentWorking: false, currentStepIndex: -1, consecutiveErrors: lastConsecutiveErrors, capacityErrors: 0, lastActivityTimestamp: "", messageCount: 0 };
     }
     const diagnostics = JSON.parse(result);
+    const capacityErrors = parse503Errors(diagnostics.extensionLogs || []);
+    const lastActivityTimestamp = diagnostics.lastAgentActivity?.timestamp || "";
+    const messageCount = diagnostics.lastAgentActivity?.messageCount || 0;
     if (diagnostics.recentTrajectories?.length) {
       const activeTrajectory = diagnostics.recentTrajectories[0];
       const currentStepIndex = activeTrajectory.lastStepIndex || 0;
@@ -3827,14 +3834,14 @@ async function checkAgentWorkingState() {
         log(`[DEBUG] Got step ${currentStepIndex} from: ${activeTrajectory.summary}`);
         lastStepIndex = currentStepIndex;
         stepIndexStableCount = 0;
-        return { agentWorking: false, currentStepIndex, consecutiveErrors: 0 };
+        return { agentWorking: false, currentStepIndex, consecutiveErrors: 0, capacityErrors, lastActivityTimestamp, messageCount };
       }
       if (currentStepIndex !== lastStepIndex) {
         lastStepIndex = currentStepIndex;
         stepIndexStableCount = 0;
         promptSentAt = null;
         lastConsecutiveErrors = 0;
-        return { agentWorking: true, currentStepIndex, consecutiveErrors: 0 };
+        return { agentWorking: true, currentStepIndex, consecutiveErrors: 0, capacityErrors, lastActivityTimestamp, messageCount };
       } else {
         stepIndexStableCount++;
         const agentWorking = stepIndexStableCount < STABLE_POLLS_FOR_IDLE;
@@ -3846,13 +3853,13 @@ async function checkAgentWorkingState() {
           }
           promptSentAt = null;
         }
-        return { agentWorking, currentStepIndex, consecutiveErrors: lastConsecutiveErrors };
+        return { agentWorking, currentStepIndex, consecutiveErrors: lastConsecutiveErrors, capacityErrors, lastActivityTimestamp, messageCount };
       }
     }
-    return { agentWorking: false, currentStepIndex: -1, consecutiveErrors: lastConsecutiveErrors };
+    return { agentWorking: false, currentStepIndex: -1, consecutiveErrors: lastConsecutiveErrors, capacityErrors: 0, lastActivityTimestamp: "", messageCount: 0 };
   } catch (e) {
     log(`[DEBUG] Error: ${e}`);
-    return { agentWorking: false, currentStepIndex: -1, consecutiveErrors: lastConsecutiveErrors };
+    return { agentWorking: false, currentStepIndex: -1, consecutiveErrors: lastConsecutiveErrors, capacityErrors: 0, lastActivityTimestamp: "", messageCount: 0 };
   }
 }
 function parseFatalErrors(logs) {
@@ -3874,6 +3881,18 @@ function parseFatalErrors(logs) {
     }
   }
   return fatalCount;
+}
+function parse503Errors(logs) {
+  if (!logs || logs.length === 0)
+    return 0;
+  const recentLogs = logs.slice(-100);
+  let count = 0;
+  for (const line of recentLogs) {
+    if (line.includes("503") || line.includes("capacity") || line.includes("overloaded")) {
+      count++;
+    }
+  }
+  return count;
 }
 var vscode, lastStepIndex, stepIndexStableCount, lastAgentWorking, STABLE_POLLS_FOR_IDLE, promptSentAt, lastConsecutiveErrors, ERROR_CHECK_DELAY_MS, FATAL_PATTERNS, StateWatcher;
 var init_stateReader = __esm({
@@ -3901,7 +3920,7 @@ var init_stateReader = __esm({
       constructor(onChange) {
         this.onChange = onChange;
       }
-      start(pollMs = 1e4) {
+      start(pollMs = 3e3) {
         if (this.interval) {
           return;
         }
