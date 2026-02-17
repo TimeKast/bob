@@ -2,7 +2,7 @@
     "name": "bob-autoclicker",
     "displayName": "BOB Auto Clicker",
     "description": "Auto-accepts Antigravity changes",
-    "version": "0.6.0",
+    "version": "0.7.3",
     "publisher": "timekast",
     "engines": {
         "vscode": "^1.85.0"

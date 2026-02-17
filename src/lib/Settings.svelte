@@ -92,6 +92,21 @@
           bind:value={localSettings.defaultPrompt}
           rows="2"
         ></textarea>
+        <span class="hint"
+          >Usado en modo Dev o cuando no hay prompt específico</span
+        >
+      </div>
+
+      <div class="field">
+        <label for="defaultSupportPrompt">Default Support Prompt</label>
+        <textarea
+          id="defaultSupportPrompt"
+          bind:value={localSettings.defaultSupportPrompt}
+          rows="4"
+        ></textarea>
+        <span class="hint"
+          >Usado en modo Soporte si no hay prompt específico para la instancia</span
+        >
       </div>
 
       <div class="field">
@@ -114,6 +129,21 @@
           min="1"
           max="10"
         />
+      </div>
+
+      <div class="section-header">🐙 GitHub Integration</div>
+
+      <div class="field">
+        <label for="githubToken">GitHub Personal Access Token</label>
+        <input
+          type="password"
+          id="githubToken"
+          bind:value={localSettings.githubToken}
+          placeholder="ghp_..."
+        />
+        <span class="hint"
+          >Required for Support Mode (reading private repos/rate limits)</span
+        >
       </div>
 
       <div class="section-header">🔔 Notifications</div>

@@ -8,6 +8,7 @@
     acceptDialog,
     writeToChat,
     settings,
+    updateInstanceBacklogs,
   } from "./store";
 
   interface Props {
@@ -20,6 +21,29 @@
   let testing = $state(false);
   let showSettings = $state(false);
   let localIssuesPath = $state(instance.issuesPath || "");
+  let localGithubRepo = $state(instance.githubRepo || "");
+
+  // Local state for prompts
+  let tempSettings = $state({
+    customPrompt: instance.customPrompt || "",
+    customPromptDev: instance.customPromptDev || "",
+    customPromptSupport: instance.customPromptSupport || "",
+  });
+
+  $effect(() => {
+    tempSettings.customPrompt = instance.customPrompt || "";
+    tempSettings.customPromptDev = instance.customPromptDev || "";
+    tempSettings.customPromptSupport = instance.customPromptSupport || "";
+  });
+
+  function savePrompts() {
+    if (tempSettings.customPrompt !== instance.customPrompt)
+      updateSetting("customPrompt", tempSettings.customPrompt);
+    if (tempSettings.customPromptDev !== instance.customPromptDev)
+      updateSetting("customPromptDev", tempSettings.customPromptDev);
+    if (tempSettings.customPromptSupport !== instance.customPromptSupport)
+      updateSetting("customPromptSupport", tempSettings.customPromptSupport);
+  }
 
   const statusColors: Record<string, string> = {
     idle: "#ffb800",
@@ -64,6 +88,26 @@
         [instance.projectName]: { issuesPath: trimmed || undefined },
       },
     }));
+  }
+
+  function saveGithubRepo() {
+    const trimmed = localGithubRepo.trim();
+    instances.update((list: Instance[]) =>
+      list.map((i: Instance) =>
+        i.id === instance.id ? { ...i, githubRepo: trimmed || undefined } : i,
+      ),
+    );
+    settings.update((s: Settings) => ({
+      ...s,
+      projectOverrides: {
+        ...s.projectOverrides,
+        [instance.projectName]: {
+          ...s.projectOverrides[instance.projectName],
+          githubRepo: trimmed || undefined,
+        },
+      },
+    }));
+    if (instance.supportMode) updateInstanceBacklogs();
   }
 
   async function handleDetectUI() {
@@ -148,6 +192,83 @@
 
     testing = false;
   }
+
+  function updateMode(mode: "developmentMode" | "supportMode", value: boolean) {
+    // Determine new state
+    const newModeValue = value;
+    const otherMode =
+      mode === "developmentMode" ? "supportMode" : "developmentMode";
+    // If turning ON, force other OFF. If turning OFF, other stays as is (likely off)
+    const otherModeValue = newModeValue ? false : !!instance[otherMode];
+
+    // Enable instance if ANY mode is active
+    const newEnabled = !!(newModeValue || otherModeValue);
+
+    // Update local state immediately for UI
+    instances.update((list: Instance[]) =>
+      list.map((i: Instance) =>
+        i.id === instance.id
+          ? {
+              ...i,
+              [mode]: newModeValue,
+              [otherMode]: otherModeValue,
+              enabled: newEnabled,
+            }
+          : i,
+      ),
+    );
+
+    // Persist to settings
+    settings.update((s: Settings) => {
+      const currentOverride = s.projectOverrides[instance.projectName] || {};
+      const newOverride = {
+        ...currentOverride,
+        [mode]: newModeValue,
+        [otherMode]: otherModeValue, // Persist exclusivity
+        enabled: newEnabled,
+      };
+
+      return {
+        ...s,
+        projectOverrides: {
+          ...s.projectOverrides,
+          [instance.projectName]: newOverride,
+        },
+      };
+    });
+
+    // Trigger backlog refresh to apply new path
+    updateInstanceBacklogs();
+  }
+
+  function updateSetting(key: keyof Instance, value: any) {
+    // Update local state
+    instances.update((list: Instance[]) =>
+      list.map((i: Instance) =>
+        i.id === instance.id ? { ...i, [key]: value } : i,
+      ),
+    );
+
+    // Persist to settings
+    settings.update((s: Settings) => {
+      const currentOverride = s.projectOverrides[instance.projectName] || {};
+      return {
+        ...s,
+        projectOverrides: {
+          ...s.projectOverrides,
+          [instance.projectName]: {
+            ...currentOverride,
+            [key]: value,
+          },
+        },
+      };
+    });
+
+    // Trigger refresh if relevant
+    if (key.includes("Path") || key === "githubRepo") {
+      updateInstanceBacklogs();
+    }
+  }
 </script>
 
 <div
@@ -176,10 +297,6 @@
       >
         ⚙️
       </button>
-      <label class="toggle">
-        <input type="checkbox" checked={instance.enabled} onchange={onToggle} />
-        <span class="slider"></span>
-      </label>
     </div>
   </div>
 
@@ -194,11 +311,41 @@
     </div>
 
     <div class="stats">
-      <span class="stat">
-        📋 {instance.currentIssue}/{instance.totalIssues} issues
-      </span>
-      <span class="stat" class:retry={instance.retryCount > 0}>
-        🔄 {instance.retryCount}/{instance.maxRetries} retries
+      <!-- Primary Stats Display (Dev or Support) -->
+      {#if (instance.issuesDev?.total ?? 0) > 0 || instance.developmentMode}
+        <span
+          class="stat highlight-dev"
+          class:active-mode={instance.developmentMode}
+          class:inactive-mode={!instance.developmentMode &&
+            ((instance.issuesSupport?.total ?? 0) > 0 || instance.supportMode)}
+        >
+          🛠️ {instance.issuesDev?.completed || 0}/{instance.issuesDev?.total ||
+            0} Dev
+        </span>
+      {/if}
+
+      {#if (instance.issuesSupport?.total ?? 0) > 0 || instance.supportMode}
+        <span
+          class="stat highlight-support"
+          class:active-mode={instance.supportMode}
+          class:inactive-mode={!instance.supportMode &&
+            ((instance.issuesDev?.total ?? 0) > 0 || instance.developmentMode)}
+        >
+          🚑 {instance.issuesSupport?.completed || 0}/{instance.issuesSupport
+            ?.total || 0} Sup
+        </span>
+      {/if}
+
+      {#if !instance.developmentMode && !instance.supportMode && !(instance.issuesDev?.total ?? 0) && !(instance.issuesSupport?.total ?? 0)}
+        <span class="stat"> 😴 Inactivo </span>
+      {/if}
+
+      <span
+        class="stat"
+        class:retry={instance.retryCount > 0}
+        style="margin-left: auto;"
+      >
+        🔄 {instance.retryCount}/{instance.maxRetries}
       </span>
     </div>
 
@@ -210,6 +357,53 @@
         ⏱️ {formatTime(instance.lastActivity)}
       </span>
     </div>
+
+    <!-- Mode Toggles Row -->
+    <div class="mode-toggles">
+      <label
+        class="mode-toggle"
+        class:active={instance.developmentMode}
+        title="Activar Modo Desarrollo"
+      >
+        <input
+          type="checkbox"
+          checked={instance.developmentMode}
+          onchange={(e) => {
+            updateMode("developmentMode", e.currentTarget.checked);
+            e.currentTarget.blur();
+          }}
+        />
+        <span class="mode-label">🛠️ Dev</span>
+      </label>
+      <label
+        class="mode-toggle"
+        class:active={instance.supportMode}
+        title="Activar Modo Soporte"
+      >
+        <input
+          type="checkbox"
+          checked={instance.supportMode}
+          onchange={(e) => {
+            updateMode("supportMode", e.currentTarget.checked);
+            e.currentTarget.blur();
+          }}
+        />
+        <span class="mode-label">🚑 Support</span>
+      </label>
+    </div>
+
+    {#if instance.currentIssueTitle}
+      <div class="current-issue" title={instance.currentIssueBody || ""}>
+        <span class="badge"
+          >{instance.developmentMode
+            ? "DEV"
+            : instance.supportMode
+              ? "SUPPORT"
+              : "issue"}</span
+        >
+        <b>#{instance.currentIssue}</b>: {instance.currentIssueTitle}
+      </div>
+    {/if}
 
     {#if instance.customPrompt}
       <div class="custom-prompt">
@@ -241,13 +435,112 @@
               onblur={saveIssuesPath}
             />
           </div>
-          <span class="hint">
-            {#if instance.issuesPath}
-              Usando: {instance.issuesPath}
-            {:else}
-              Auto-detectando desde {instance.projectPath}
+          <div class="setting-group">
+            <label>
+              Custom Prompt (Default/Fallback):
+              <textarea
+                bind:value={tempSettings.customPrompt}
+                placeholder="Prompt base para la IA..."
+                rows="3"
+                onblur={savePrompts}
+              ></textarea>
+            </label>
+
+            <label style="margin-top: 0.5rem; display: block;">
+              Custom Prompt (Desarrollo 🛠️):
+              <textarea
+                bind:value={tempSettings.customPromptDev}
+                placeholder="Prompt específico para desarrollo..."
+                rows="2"
+                style="font-size: 0.85rem;"
+                onblur={savePrompts}
+              ></textarea>
+            </label>
+
+            <label style="margin-top: 0.5rem; display: block;">
+              Custom Prompt (Soporte 🚑):
+              <textarea
+                bind:value={tempSettings.customPromptSupport}
+                placeholder="Prompt específico para soporte/issues..."
+                rows="2"
+                style="font-size: 0.85rem;"
+                onblur={savePrompts}
+              ></textarea>
+            </label>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Configuración de Modos</label>
+
+          {#if instance.developmentMode}
+            <div class="setting-group nested">
+              <label>GitHub Repo (Dev)</label>
+              <input
+                type="text"
+                placeholder="owner/repo (ej: timekast/bob-dev)"
+                value={instance.githubRepoDev || ""}
+                onchange={(e) =>
+                  updateSetting("githubRepoDev", e.currentTarget.value)}
+              />
+            </div>
+            {#if !instance.githubRepoDev}
+              <div class="setting-group nested">
+                <label>Ruta Issues Desarrollo (Opcional)</label>
+                <input
+                  type="text"
+                  placeholder="Ej: C:\Proyectos\Timekast\issues_dev"
+                  value={instance.issuesPathDev || ""}
+                  onchange={(e) =>
+                    updateSetting("issuesPathDev", e.currentTarget.value)}
+                />
+                <div class="help-text">
+                  Deja vacío para usar automático (issues/dev)
+                </div>
+              </div>
             {/if}
-          </span>
+          {/if}
+
+          {#if instance.supportMode}
+            <div class="setting-group nested">
+              <label>GitHub Repo (Support)</label>
+              <input
+                type="text"
+                placeholder="owner/repo (ej: timekast/bob)"
+                value={instance.githubRepoSupport || instance.githubRepo || ""}
+                onchange={(e) =>
+                  updateSetting("githubRepoSupport", e.currentTarget.value)}
+              />
+            </div>
+
+            {#if !instance.githubRepoSupport && !instance.githubRepo}
+              <div class="setting-group nested">
+                <label>Ruta Issues Soporte (Local)</label>
+                <input
+                  type="text"
+                  placeholder="Ej: C:\Proyectos\Timekast\issues_support"
+                  value={instance.issuesPathSupport || ""}
+                  onchange={(e) =>
+                    updateSetting("issuesPathSupport", e.currentTarget.value)}
+                />
+                <div class="help-text">
+                  Usa este campo si NO usas GitHub. Vacío = issues/support.
+                </div>
+              </div>
+            {/if}
+          {/if}
+
+          {#if !instance.developmentMode && !instance.supportMode}
+            <div class="help-text" style="padding: 0.5rem; opacity: 0.5;">
+              Activa un modo (Dev o Support) para ver su configuración
+              específica.
+            </div>
+          {/if}
+
+          <span class="hint"
+            >Modifica la carpeta de búsqueda de issues: issues/dev o
+            issues/support</span
+          >
         </div>
       </div>
     {/if}
@@ -309,49 +602,16 @@
     font-size: 1rem;
   }
 
-  /* Toggle switch */
-  .toggle {
-    position: relative;
-    width: 44px;
-    height: 24px;
+  .stat.active-mode {
+    opacity: 1;
+    font-weight: bold;
+    color: #fff;
+    text-shadow: 0 0 10px rgba(255, 255, 255, 0.2);
   }
 
-  .toggle input {
-    opacity: 0;
-    width: 0;
-    height: 0;
-  }
-
-  .slider {
-    position: absolute;
-    cursor: pointer;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: #444;
-    transition: 0.3s;
-    border-radius: 24px;
-  }
-
-  .slider:before {
-    position: absolute;
-    content: "";
-    height: 18px;
-    width: 18px;
-    left: 3px;
-    bottom: 3px;
-    background-color: white;
-    transition: 0.3s;
-    border-radius: 50%;
-  }
-
-  input:checked + .slider {
-    background: linear-gradient(90deg, #00d9ff, #00ff88);
-  }
-
-  input:checked + .slider:before {
-    transform: translateX(20px);
+  .stat.inactive-mode {
+    opacity: 0.4;
+    transform: scale(0.95);
   }
 
   .content {
@@ -406,49 +666,17 @@
     margin-top: 0.25rem;
   }
 
-  .test-controls {
-    display: flex;
-    gap: 0.5rem;
-    margin-top: 0.5rem;
-  }
-
-  .btn-test {
-    flex: 1;
-    padding: 0.4rem 0.6rem;
-    font-size: 0.75rem;
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    border-radius: 6px;
-    color: #eee;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .btn-test:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.2);
-  }
-
-  .btn-test:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .btn-send {
-    background: rgba(0, 217, 255, 0.2);
-    border-color: rgba(0, 217, 255, 0.4);
-  }
-
-  .btn-send:hover:not(:disabled) {
-    background: rgba(0, 217, 255, 0.3);
-  }
-
-  .test-result {
-    font-size: 0.7rem;
-    padding: 0.4rem;
-    background: rgba(0, 0, 0, 0.3);
+  .current-issue {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 4px;
-    color: #aaa;
-    margin-top: 0.25rem;
+    padding: 0.5rem;
+    margin-top: 0.5rem;
+    font-size: 0.85rem;
+    color: #e0e0e0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .blocked-indicator {
@@ -549,5 +777,30 @@
     padding: 0.1rem 0.3rem;
     opacity: 0.5;
     cursor: help;
+  }
+
+  .mode-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    cursor: pointer;
+    background: rgba(255, 255, 255, 0.05);
+    padding: 0.3rem 0.6rem;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    transition: all 0.2s;
+  }
+
+  .mode-toggle:hover {
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .mode-toggle input {
+    width: auto;
+    margin: 0;
+  }
+
+  .mode-label {
+    font-size: 0.8rem;
   }
 </style>

@@ -5,7 +5,7 @@ let interval: NodeJS.Timeout | null = null;
 let statusBar: vscode.StatusBarItem;
 
 export function activate(context: vscode.ExtensionContext) {
-    console.log('BOB Auto Clicker v0.6.0 activated');
+    console.log('BOB Auto Clicker v0.7.0 activated');
 
     // Create clickable status bar item
     statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -150,6 +150,14 @@ function stopAutoClicker() {
 
 async function tryAccept(cfg: ReturnType<typeof getConfig>) {
     console.log(`BOB: Attempting accept (Accept: ${cfg.enableAccept}, AcceptAll: ${cfg.enableAcceptAll})`);
+
+    // Focus agent panel to ensure context (safe, minimal)
+    try {
+        await vscode.commands.executeCommand('antigravity.agentPanel.focus');
+    } catch {
+        // Ignore
+    }
+
 
     // Accept All - just call the command
     if (cfg.enableAcceptAll) {

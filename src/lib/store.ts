@@ -3,11 +3,134 @@
 import { writable, get } from 'svelte/store';
 import type { Instance, Settings } from './types';
 import { invoke } from '@tauri-apps/api/core';
-import { getSilentExtensions, matchExtensionToInstance, acceptAllSilent, acceptStepSilent, acceptTerminalSilent, sendPromptSilent, retrySilent, getStateSilent, type SilentExtension } from './websocket';
+import { getSilentExtensions, matchExtensionToInstance, type SilentExtension } from './websocket';
+
+// Default Support Prompt (Fallback)
+// Default Support Prompt (Knowledge Base Generator)
+const DEFAULT_SUPPORT_PROMPT = `6.0 👨💻 Generador de Knowledge Base para AI Support Agent
+
+
+> *Input*: /docs/* (documentación completa)
+> *Output*: /docs/support/* (knowledge base para AI)
+> *Siguiente*: 7.0_Mantenimiento_Auditoria.md (cuando haya cambios)
+
+
+Actúa como un AI Documentation Architect y Support Enablement Specialist.
+
+
+Tu objetivo es preparar una base de conocimiento completa y precisa para un agente de AI que dará soporte técnico y funcional a clientes y usuarios finales de esta aplicación.
+
+
+Tareas obligatorias:
+
+
+1. Revisión y comprensión total
+   - Recorre y analiza exhaustivamente TODOS los archivos dentro del directorio /docs del repositorio.
+   - Asume que /docs contiene la fuente de verdad del producto.
+   - Comprende a profundidad:
+     - El propósito de la aplicación.
+     - El flujo completo del usuario.
+     - La arquitectura funcional (no solo técnica).
+     - Las reglas de negocio.
+     - Los tipos de usuario y sus permisos.
+     - Casos normales, casos borde y flujos de error.
+     - Procesos críticos y sensibles (financieros, autorizaciones, estados, etc).
+     - El Design System (tokens, temas, componentes) documentado en /docs/16_design_system.md.
+     - Opciones de personalización de tema disponibles para el usuario.
+
+
+2. Modelo mental del producto
+   - Reconstruye mentalmente cómo funciona la aplicación de inicio a fin.
+   - Identifica claramente:
+     - Qué problema resuelve.
+     - Para quién está diseñada.
+     - Qué acciones puede y no puede hacer cada tipo de usuario.
+     - Qué decisiones son automáticas y cuáles requieren intervención humana.
+
+
+3. Extracción de User Stories y flujos
+   - Deriva y documenta:
+     - User Stories claras por tipo de usuario.
+     - Flujos principales (happy paths).
+     - Flujos alternos.
+     - Flujos de error comunes.
+   - Usa lenguaje entendible tanto para usuarios finales como para agentes de soporte.
+
+
+4. Identificación de temas de soporte
+   - Identifica y documenta:
+     - Dudas frecuentes esperables.
+     - Errores comunes de usuario.
+     - Bugs conocidos (si están documentados).
+     - Comportamientos que podrían confundirse con bugs.
+     - Limitaciones actuales del sistema.
+     - Supuestos importantes que el usuario debe conocer.
+
+
+5. Generación de archivos de soporte para AI
+   - Crea uno o varios archivos especializados (según lo consideres óptimo).
+   - Los archivos DEBEN crearse dentro del directorio:
+     /docs/support
+   - Ejemplos de archivos posibles (no limitativo):
+     - AI_SUPPORT_KNOWLEDGE.md
+     - AI_SUPPORT_PLAYBOOK.md
+     - AI_SUPPORT_FAQ.md
+     - AI_SUPPORT_CONTEXT.md
+   - Cada archivo debe estar claramente enfocado y no ser redundante.
+
+
+6. Contenido obligatorio de los archivos
+   Los archivos deben incluir, como mínimo:
+
+
+   - Visión general del producto (qué es y qué no es).
+   - Tipos de usuario y capacidades por rol.
+   - Glosario de términos del sistema.
+   - User stories resumidas y detalladas.
+   - Explicación de flujos clave paso a paso.
+   - Mapeo de pantallas o módulos con su función.
+   - Lista de preguntas frecuentes con respuestas claras.
+   - Guía para clasificar feedback entrante:
+     - Duda general
+     - Sugerencia / mejora
+     - Bug
+     - Problema de uso
+   - Guía para hacer preguntas de aclaración al usuario cuando la información sea insuficiente.
+   - Señales claras para escalar a equipo técnico o de producto.
+   - Referencias cruzadas a documentos específicos de /docs para consulta rápida (usando nombres exactos de archivo o secciones).
+
+
+7. Enfoque en soporte con AI
+   - Escribe el contenido pensando en que será usado por otro agente de AI.
+   - El lenguaje debe ser:
+     - Preciso
+     - No ambiguo
+     - Operativo
+     - Fácil de consultar rápidamente
+   - Evita suposiciones no documentadas.
+   - Si algo no está claro en /docs, márcalo explícitamente como “No documentado” o “Asunción”.
+
+
+8. Calidad y completitud
+   - El resultado debe permitir que un agente de AI:
+     - Atienda dudas funcionales sin ayuda humana.
+     - Reciba y clasifique correctamente sugerencias y feedback.
+     - Identifique bugs reales vs errores de uso.
+     - Guíe al usuario de forma clara, consistente y empática.
+   - No omitas información relevante por simplicidad.
+
+
+Entregables:
+- Genera los archivos finales listos para ser versionados en el repositorio.
+- Asegúrate de que todos los archivos estén dentro de /docs/support.
+- Usa Markdown bien estructurado.
+- No incluyas explicaciones fuera de los archivos generados.
+- El resultado debe poder usarse directamente como contexto base para un AI Support Agent.`;
 
 // Default settings
 const defaultSettings: Settings = {
     defaultPrompt: 'Continúa con el siguiente paso',
+    defaultSupportPrompt: DEFAULT_SUPPORT_PROMPT,
     inactivitySeconds: 30,
     maxRetries: 3,
     discordWebhook: '',
@@ -32,6 +155,8 @@ const defaultSettings: Settings = {
     logFilePath: '',  // Empty = use default location (app data dir)
     // Silent mode
     silentModePreferred: true,  // If true, prefer silent mode when extension is connected
+    // GitHub Integration
+    githubToken: import.meta.env.VITE_GITHUB_TOKEN || '',
     // Per-project overrides
     projectOverrides: {}  // { projectName: { issuesPath?: string } }
 };
@@ -41,7 +166,12 @@ function loadSettings(): Settings {
     if (typeof window !== 'undefined' && window.localStorage) {
         const saved = localStorage.getItem('bob-settings');
         if (saved) {
-            return { ...defaultSettings, ...JSON.parse(saved) };
+            const parsed = JSON.parse(saved);
+            // Fallback to env var if local setting is empty
+            if (!parsed.githubToken && defaultSettings.githubToken) {
+                parsed.githubToken = defaultSettings.githubToken;
+            }
+            return { ...defaultSettings, ...parsed };
         }
     }
     return defaultSettings;
@@ -102,55 +232,108 @@ export const instances = writable<Instance[]>([]);
 export async function scanForInstances(): Promise<void> {
     try {
         // Get connected extensions via Silent Mode (cross-platform)
-        const silentExtensions = await getSilentExtensions();
-        await log.info(`Scan completed: found ${silentExtensions.length} connected extensions`);
+        let silentExtensions: SilentExtension[] = [];
+        try {
+            silentExtensions = await getSilentExtensions();
+            await log.info(`Scan completed: found ${silentExtensions.length} connected extensions`);
+        } catch (e) {
+            console.warn('Silent extension scan failed, falling back to legacy:', e);
+        }
 
         const currentInstances = get(instances);
+        let newInstances: Instance[] = [];
 
-        // Map silent extensions to Instance objects
-        const newInstances: Instance[] = silentExtensions.map((ext) => {
-            // Use workspacePath from extension, with windowId as handle
-            const windowHandle = parseInt(ext.windowId.replace(/\D/g, '')) || Date.now();
+        if (silentExtensions.length > 0) {
+            // Map silent extensions to Instance objects
+            newInstances = silentExtensions.map((ext) => {
+                // Use workspacePath from extension, with windowId as handle
+                const windowHandle = parseInt(ext.windowId.replace(/\D/g, '')) || Date.now();
 
-            // Check if this instance already exists (by workspace name)
-            const existing = currentInstances.find(i =>
-                i.projectName.toLowerCase() === ext.workspaceName.toLowerCase()
-            );
+                // Check if this instance already exists (by workspace name)
+                const existing = currentInstances.find(i =>
+                    i.projectName.toLowerCase() === ext.workspaceName.toLowerCase()
+                );
 
-            if (existing) {
+                if (existing) {
+                    return {
+                        ...existing,
+                        windowTitle: `${ext.workspaceName} - Antigravity`,
+                        projectPath: ext.workspacePath || existing.projectPath,
+                        connectionMode: 'silent' as const,
+                        silentWindowId: ext.windowId,
+                    };
+                }
+
+                // Create new instance from silent extension
+                const currentSettings = get(settings);
+                const override = currentSettings.projectOverrides?.[ext.workspaceName];
                 return {
-                    ...existing,
+                    id: `instance-${ext.windowId}`,
                     windowTitle: `${ext.workspaceName} - Antigravity`,
-                    projectPath: ext.workspacePath || existing.projectPath,
+                    windowHandle: windowHandle,
+                    projectPath: ext.workspacePath || '',
+                    projectName: ext.workspaceName,
+                    enabled: false,
+                    currentIssue: 0,
+                    totalIssues: 0,
+                    retryCount: 0,
+                    maxRetries: get(settings).maxRetries,
+                    status: ext.state?.agentWorking ? 'working'
+                        : ((ext.state?.consecutiveErrors ?? 0) > 0) ? 'error' : 'idle',
+                    lastActivity: Date.now(),
+                    stepCount: 0,
                     connectionMode: 'silent' as const,
                     silentWindowId: ext.windowId,
+                    // Apply persisted overrides
+                    issuesPath: override?.issuesPath,
+                    issuesPathSupport: override?.issuesPathSupport,
+                    githubRepoSupport: override?.githubRepoSupport,
+                    githubRepoDev: override?.githubRepoDev,
+                    // Legacy fallback
+                    githubRepo: override?.githubRepo,
                 };
-            }
+            });
+        } else {
+            // Fallback: Legacy Scan (Windows Only)
+            try {
+                const windows = await invoke<ScanResult[]>('scan_windows');
+                if (windows.length > 0) {
+                    newInstances = windows.map(w => {
+                        const existing = currentInstances.find(i => i.windowHandle === w.windowHandle);
+                        if (existing) return existing;
 
-            // Create new instance from silent extension
-            const currentSettings = get(settings);
-            const override = currentSettings.projectOverrides?.[ext.workspaceName];
-            return {
-                id: `instance-${ext.windowId}`,
-                windowTitle: `${ext.workspaceName} - Antigravity`,
-                windowHandle: windowHandle,
-                projectPath: ext.workspacePath || '',
-                projectName: ext.workspaceName,
-                enabled: false,
-                currentIssue: 0,
-                totalIssues: 0,
-                retryCount: 0,
-                maxRetries: get(settings).maxRetries,
-                status: ext.state?.agentWorking ? 'working'
-                    : ((ext.state?.consecutiveErrors ?? 0) > 0) ? 'error' : 'idle',
-                lastActivity: Date.now(),
-                stepCount: 0,
-                connectionMode: 'silent' as const,
-                silentWindowId: ext.windowId,
-                // Apply persisted overrides
-                issuesPath: override?.issuesPath,
-            };
-        });
+                        const projectName = extractProjectName(w.windowTitle);
+                        const currentSettings = get(settings);
+                        const override = currentSettings.projectOverrides?.[projectName];
+
+                        return {
+                            id: `legacy-${w.windowHandle}`,
+                            windowTitle: w.windowTitle,
+                            windowHandle: w.windowHandle,
+                            projectPath: extractProjectPath(w.windowTitle),
+                            projectName: projectName,
+                            enabled: false,
+                            currentIssue: 0,
+                            totalIssues: 0,
+                            retryCount: 0,
+                            maxRetries: get(settings).maxRetries,
+                            status: 'idle',
+                            lastActivity: Date.now(),
+                            stepCount: 0,
+                            connectionMode: 'legacy',
+                            // Apply overrides
+                            issuesPath: override?.issuesPath,
+                            issuesPathSupport: override?.issuesPathSupport,
+                            githubRepoSupport: override?.githubRepoSupport,
+                            githubRepoDev: override?.githubRepoDev,
+                            githubRepo: override?.githubRepo,
+                        };
+                    });
+                }
+            } catch (e) {
+                console.error('Legacy scan failed:', e);
+            }
+        }
 
         instances.set(newInstances);
 
@@ -205,37 +388,159 @@ export async function updateInstanceBacklogs(): Promise<void> {
         try {
             console.log(`[${instance.projectName}] Reading backlog from: ${instance.issuesPath || instance.projectPath}`);
 
-            const backlog = instance.issuesPath
-                ? await invoke<{
-                    totalIssues: number;
-                    completedIssues: number;
-                    currentIssue: string;
-                    error?: string;
-                }>('read_backlog_direct', { issuesPath: instance.issuesPath })
-                : await invoke<{
-                    totalIssues: number;
-                    completedIssues: number;
-                    currentIssue: string;
-                    error?: string;
-                }>('read_backlog', { projectPath: instance.projectPath });
+            // 1. Fetch Default/Base Backlog (always needed for base path)
+            // -----------------------------------------------------------
+            let baseResult: BacklogResult | null = instance.issuesPath
+                ? await invoke<BacklogResult>('read_backlog_direct', { issuesPath: instance.issuesPath })
+                : await invoke<BacklogResult>('read_backlog', { projectPath: instance.projectPath });
 
-            console.log(`[${instance.projectName}] Backlog result:`, backlog);
+            // Base path for relative calculations
+            const basePath = baseResult?.backlogPath || '';
+            const separator = instance.projectPath.includes('\\') ? '\\' : '/';
+            const cleanBasePath = basePath.endsWith(separator) ? basePath.slice(0, -1) : basePath;
 
-            if (backlog && !backlog.error) {
+
+            // 2. Fetch DEV Backlog (statsDev)
+            // -------------------------------
+            let statsDev = { current: 0, total: 0, completed: 0, title: '', body: '' };
+            let devRepo = instance.githubRepoDev;
+            let devPath = instance.issuesPathDev;
+
+            // Auto-detect dev path if not explicit
+            if (!devRepo && !devPath) {
+                devPath = `${cleanBasePath}${separator}dev`;
+            }
+
+            if (devRepo && get(settings).githubToken) {
+                // GitHub Dev
+                try {
+                    const ghResult = await invoke<any>('read_backlog_github', { token: get(settings).githubToken, repo: devRepo });
+                    if (ghResult) {
+                        statsDev = {
+                            current: ghResult.completedIssues,
+                            total: ghResult.totalIssues,
+                            completed: ghResult.completedIssues,
+                            title: ghResult.currentIssue,
+                            body: ghResult.currentIssueBody
+                        };
+                    }
+                } catch (e) { console.warn(`[${instance.projectName}] Dev GitHub failed:`, e); }
+            } else if (devPath) {
+                // Local Dev
+                try {
+                    const localResult = await invoke<BacklogResult>('read_backlog_direct', { issuesPath: devPath });
+                    if (localResult && !localResult.error) {
+                        statsDev = {
+                            current: localResult.completedIssues,
+                            total: localResult.totalIssues,
+                            completed: localResult.completedIssues,
+                            title: localResult.currentIssue,
+                            body: ''
+                        };
+                    }
+                } catch (e) { /* ignore if folder doesn't exist */ }
+            }
+
+
+            // 3. Fetch SUPPORT Backlog (statsSupport)
+            // ---------------------------------------
+            let statsSupport = { current: 0, total: 0, completed: 0, title: '', body: '' };
+            let supportRepo = instance.githubRepoSupport || instance.githubRepo; // fallback
+            let supportPath = instance.issuesPathSupport;
+
+            // Auto-detect support path if not explicit
+            if (!supportRepo && !supportPath) {
+                supportPath = `${cleanBasePath}${separator}support`;
+            }
+
+            if (supportRepo && get(settings).githubToken) {
+                // GitHub Support
+                try {
+                    const ghResult = await invoke<any>('read_backlog_github', { token: get(settings).githubToken, repo: supportRepo });
+                    if (ghResult) {
+                        statsSupport = {
+                            current: ghResult.completedIssues,
+                            total: ghResult.totalIssues,
+                            completed: ghResult.completedIssues,
+                            title: ghResult.currentIssue,
+                            body: ghResult.currentIssueBody
+                        };
+                    }
+                } catch (e) { console.warn(`[${instance.projectName}] Support GitHub failed:`, e); }
+            } else if (supportPath) {
+                // Local Support
+                try {
+                    const localResult = await invoke<BacklogResult>('read_backlog_direct', { issuesPath: supportPath });
+                    if (localResult && !localResult.error) {
+                        statsSupport = {
+                            current: localResult.completedIssues,
+                            total: localResult.totalIssues,
+                            completed: localResult.completedIssues,
+                            title: localResult.currentIssue,
+                            body: ''
+                        };
+                    }
+                } catch (e) { /* ignore */ }
+            }
+
+
+            // 4. Update Instance State
+            // ------------------------
+            // Decide which stats to show as "Main" based on active mode
+            let result = baseResult; // Default to base
+            let currentIssueBody = undefined;
+            let currentIssueTitle = baseResult?.currentIssue;
+
+            if (instance.developmentMode) {
+                // Dev Mode Active
+                result = {
+                    totalIssues: statsDev.total,
+                    completedIssues: statsDev.completed,
+                    currentIssue: statsDev.title,
+                    backlogPath: devPath || 'GitHub',
+                    error: undefined
+                };
+                currentIssueBody = statsDev.body;
+                currentIssueTitle = statsDev.title;
+            } else if (instance.supportMode) {
+                // Support Mode Active
+                result = {
+                    totalIssues: statsSupport.total,
+                    completedIssues: statsSupport.completed,
+                    currentIssue: statsSupport.title,
+                    backlogPath: supportPath || 'GitHub',
+                    error: undefined
+                };
+                currentIssueBody = statsSupport.body;
+                currentIssueTitle = statsSupport.title;
+            } else {
+                // Standard/Base Mode (no toggle)
+                // Use baseResult as is
+            }
+
+            console.log(`[${instance.projectName}] Backlog result:`, result);
+
+            if (result && !result.error) {
                 instances.update(list =>
                     list.map(i => i.id === instance.id
                         ? {
                             ...i,
-                            totalIssues: backlog.totalIssues,
-                            currentIssue: backlog.completedIssues,
-                            issuesCompleted: backlog.completedIssues
+                            totalIssues: result!.totalIssues,
+                            currentIssue: result!.completedIssues,
+                            issuesCompleted: result!.completedIssues,
+                            // Store GitHub/Local context if available
+                            currentIssueBody: currentIssueBody,
+                            currentIssueTitle: currentIssueTitle,
+                            // Store separate mode stats
+                            issuesDev: statsDev,
+                            issuesSupport: statsSupport
                         }
                         : i
                     )
                 );
-                console.log(`[${instance.projectName}] ✅ Backlog: ${backlog.completedIssues}/${backlog.totalIssues}, current: ${backlog.currentIssue}`);
-            } else if (backlog?.error) {
-                console.warn(`[${instance.projectName}] Backlog error: ${backlog.error}`);
+                console.log(`[${instance.projectName}] ✅ Backlog: ${result.completedIssues}/${result.totalIssues}, current: ${result.currentIssue}`);
+            } else if (result?.error) {
+                console.warn(`[${instance.projectName}] Backlog error: ${result.error}`);
             }
         } catch (error) {
             console.warn(`[${instance.projectName}] Failed to read backlog:`, error);
@@ -343,6 +648,15 @@ interface InstanceStatus {
     stepCount: number;
 }
 
+import {
+    getStateSilent,
+    acceptAllSilent,
+    acceptStepSilent,
+    sendPromptSilent,
+    retrySilent,
+    type SilentState
+} from './websocket';
+
 // UI Automation types
 interface UIStateResult {
     hasAcceptButton: boolean;
@@ -447,6 +761,191 @@ export async function writeToChat(windowHandle: number, prompt: string): Promise
     }
 }
 
+// Helper to extract issue number from string "#123 Title"
+function extractIssueNumber(str: string): number | null {
+    const match = str.match(/^#(\d+)/);
+    return match ? parseInt(match[1]) : null;
+}
+
+// Ensure the current GitHub issue is marked as in-progress
+async function ensureIssueInProgress(instance: Instance): Promise<void> {
+    const currentSettings = get(settings);
+    if (!instance.supportMode || !instance.githubRepo || !currentSettings.githubToken) return;
+
+    // throttle updates (once per 5 minutes per instance?)
+    // or just check if we already did it for this "session"
+    // Let's rely on lastInProgressUpdate
+    if (instance.lastInProgressUpdate && (Date.now() - instance.lastInProgressUpdate < 300000)) {
+        return;
+    }
+
+    // Extract issue number via currentIssueTitle
+    if (!instance.currentIssueTitle) return;
+
+    const issueNum = extractIssueNumber(instance.currentIssueTitle);
+    if (!issueNum) return;
+
+    try {
+        const success = await invoke<boolean>('update_github_issue_status', {
+            token: currentSettings.githubToken,
+            repo: instance.githubRepo,
+            issueNumber: issueNum,
+            status: 'in-progress'
+        });
+
+        if (success) {
+            console.log(`[${instance.projectName}] Marked issue #${issueNum} as in-progress`);
+            instances.update(list =>
+                list.map(i => i.id === instance.id
+                    ? { ...i, lastInProgressUpdate: Date.now() }
+                    : i
+                )
+            );
+        }
+    } catch (e) {
+        console.error(`[${instance.projectName}] Failed to update issue status:`, e);
+    }
+}
+
+// Close current GitHub issue
+export async function closeIssue(instanceId: string): Promise<string> {
+    const currentInstances = get(instances);
+    const instance = currentInstances.find(i => i.id === instanceId);
+    const currentSettings = get(settings);
+
+    if (!instance || !instance.supportMode || !instance.githubRepo || !currentSettings.githubToken) {
+        return "Not a GitHub instance";
+    }
+
+    if (!instance.currentIssueTitle) return "No current issue loaded";
+
+    const issueNum = extractIssueNumber(instance.currentIssueTitle);
+    if (!issueNum) return "Could not extract issue number";
+
+    try {
+        const success = await invoke<boolean>('update_github_issue_status', {
+            token: currentSettings.githubToken,
+            repo: instance.githubRepo,
+            issueNumber: issueNum,
+            status: 'done'
+        });
+
+        if (success) {
+            // Trigger refresh to update backlog counts
+            setTimeout(updateInstanceBacklogs, 1000);
+            return `Closed issue #${issueNum}`;
+        } else {
+            return "Failed to close issue";
+        }
+    } catch (e) {
+        return `Error: ${e}`;
+    }
+}
+
+// Check UI state for silent instances
+async function checkAndActOnInstanceSilent(instance: Instance, silentWindowId: string, testMode: boolean): Promise<string> {
+    // Get state from websocket
+    const state = await getStateSilent(silentWindowId);
+    if (!state) return 'No silent state available';
+
+    const currentSettings = get(settings);
+
+    // Map SilentState to UIStateResult for UI compatibility
+    const uiState: UIStateResult = {
+        hasAcceptButton: state.hasAcceptButton,
+        hasEnterButton: state.hasEnterButton,
+        hasRetryButton: state.hasRetryButton,
+        isPaused: !state.agentWorking, // Rough approximation
+        chatButtonColor: state.agentWorking ? 'red' : 'gray',
+        acceptButtonX: 0, acceptButtonY: 0,
+        enterButtonX: 0, enterButtonY: 0,
+        retryButtonX: 0, retryButtonY: 0,
+        isBottomButton: false
+    };
+
+    // Update instance UI state
+    instances.update(list =>
+        list.map(i => i.id === instance.id
+            ? { ...i, uiState: uiState, lastActivity: Date.now() }
+            : i
+        )
+    );
+
+    // Handle Retry
+    if (state.hasRetryButton) {
+        const newRetryCount = instance.retryCount + 1;
+
+        if (newRetryCount >= instance.maxRetries) {
+            instances.update(list =>
+                list.map(i => i.id === instance.id
+                    ? { ...i, retryCount: newRetryCount, status: 'error', enabled: false }
+                    : i
+                )
+            );
+            await notifyDiscordGeneric(instance, `❌ Error en ${instance.projectName}`, `Se alcanzó el máximo de reintentos (${instance.maxRetries}).`);
+            return `Max retries reached (${newRetryCount})`;
+        } else {
+            await retrySilent(silentWindowId);
+            instances.update(list =>
+                list.map(i => i.id === instance.id
+                    ? { ...i, retryCount: newRetryCount, status: 'working', lastActivity: Date.now() }
+                    : i
+                )
+            );
+            return `Clicked Retry (Silent) (attempt ${newRetryCount})`;
+        }
+    }
+
+    // Handle Accept
+    if (state.hasAcceptButton) {
+        await acceptAllSilent(silentWindowId);
+        instances.update(list =>
+            list.map(i => i.id === instance.id
+                ? { ...i, status: 'working', lastActivity: Date.now() }
+                : i
+            )
+        );
+        return 'Clicked Accept (Silent)';
+    }
+
+    // Handle Enter (Prompt)
+    if (state.hasEnterButton && !state.agentWorking) {
+        // Select prompt based on mode
+        let userPrompt = instance.customPrompt;
+        if (instance.developmentMode) {
+            userPrompt = instance.customPromptDev || instance.customPrompt;
+        } else if (instance.supportMode) {
+            userPrompt = instance.customPromptSupport || currentSettings.defaultSupportPrompt || DEFAULT_SUPPORT_PROMPT;
+        }
+
+        let prompt = testMode ? 'Test' : (userPrompt || currentSettings.autoPrompt || currentSettings.defaultPrompt);
+
+        // Inject context for GitHub mode (works for both Dev and Support as currentIssueBody is set by updateInstanceBacklogs)
+        if (!testMode && (instance.supportMode || instance.developmentMode) && instance.currentIssueBody && instance.currentIssueTitle) {
+            const context = `CONTEXTO DEL ISSUE (${instance.currentIssueTitle}):\n${instance.currentIssueBody}\n\nINSTRUCCIONES:\n`;
+            if (userPrompt) {
+                prompt = context + userPrompt;
+            } else {
+                prompt = context + (currentSettings.autoPrompt || currentSettings.defaultPrompt);
+            }
+        }
+
+        await ensureIssueInProgress(instance);
+        await sendPromptSilent(silentWindowId, prompt);
+
+        instances.update(list =>
+            list.map(i => i.id === instance.id
+                ? { ...i, retryCount: 0, status: 'working', lastActivity: Date.now(), stepCount: i.stepCount + 1, lastPromptSent: Date.now() }
+                : i
+            )
+        );
+        return `Sent prompt (Silent): "${prompt.substring(0, 50)}..."`;
+    }
+
+    return 'No action needed (Silent)';
+}
+
+
 // Check UI state and perform auto-actions for enabled instances
 export async function checkAndActOnInstance(instanceId: string, testMode: boolean = false): Promise<string> {
     const currentInstances = get(instances);
@@ -455,11 +954,34 @@ export async function checkAndActOnInstance(instanceId: string, testMode: boolea
     if (!instance) return 'Instance not found';
     if (!instance.enabled && !testMode) return 'Instance disabled';
 
+    // Skip if blocked
+    if (instance.isBlocked) return 'Instance is blocked';
+
+    // Dispatch to Silent Mode handler if applicable
+    if (instance.connectionMode === 'silent' && instance.silentWindowId) {
+        return await checkAndActOnInstanceSilent(instance, instance.silentWindowId, testMode);
+    }
+
+    // Legacy Mode (Pixel Detection) - DEPRECATED/REMOVED
+    // Try to detect state via legacy method (will fail with "Legacy mode removed" if backend is updated)
+    console.log(`[${instance.projectName}] Detecting legacy UI state...`);
     const uiState = await detectUIState(instance.windowHandle);
-    if (!uiState) return 'Failed to detect UI state';
-    if (uiState.error) return `Error: ${uiState.error}`;
+
+    if (!uiState) {
+        console.error(`[${instance.projectName}] Failed to detect UI state (null)`);
+        return 'Failed to detect UI state';
+    }
+
+    if (uiState.error) {
+        console.error(`[${instance.projectName}] UI Detection Error: ${uiState.error}`);
+        return `Error: ${uiState.error}`;
+    }
+
+    console.log(`[${instance.projectName}] Legacy UI State:`, JSON.stringify(uiState));
 
     const currentSettings = get(settings);
+
+    // ... rest of legacy logic continues below ...
 
     // Update instance UI state
     instances.update(list =>
@@ -482,30 +1004,21 @@ export async function checkAndActOnInstance(instanceId: string, testMode: boolea
                 )
             );
 
-            // Send Discord notification
-            if (currentSettings.discordWebhook && currentSettings.notifyOnError) {
-                try {
-                    await invoke('notify_discord', {
-                        webhookUrl: currentSettings.discordWebhook,
-                        title: `❌ Error en ${instance.projectName}`,
-                        message: `Se alcanzó el máximo de reintentos (${instance.maxRetries}). Requiere atención manual.`
-                    });
-                } catch (e) {
-                    console.error('Failed to send Discord notification:', e);
-                }
-            }
-            return `Max retries reached (${newRetryCount}/${instance.maxRetries})`;
-        } else {
+            // Send Discord notification (throttled/generic helper)
+            await notifyDiscordGeneric(instance, `❌ Error en ${instance.projectName}`, `Se alcanzó el máximo de reintentos (${instance.maxRetries}). Requiere atención manual.`);
+
+            return `Max retries reached (${newRetryCount})`;
+        } else (
             // Click retry and increment counter
-            await clickRetryButton(instance.windowHandle, uiState.retryButtonX, uiState.retryButtonY);
+            await clickRetryButton(instance.windowHandle, uiState.retryButtonX, uiState.retryButtonY),
             instances.update(list =>
                 list.map(i => i.id === instanceId
                     ? { ...i, retryCount: newRetryCount, status: 'working', lastActivity: Date.now() }
                     : i
                 )
-            );
-            return `Clicked Retry (attempt ${newRetryCount}/${instance.maxRetries})`;
-        }
+            ),
+            `Clicked Retry (attempt ${newRetryCount}/${instance.maxRetries})`
+        );
     }
 
     // Handle accept button - click it
@@ -522,58 +1035,133 @@ export async function checkAndActOnInstance(instanceId: string, testMode: boolea
 
     // Handle enter/ready state - chat is available, send prompt
     if (uiState.hasEnterButton) {
-        const prompt = testMode ? 'Test' : (instance.customPrompt || currentSettings.defaultPrompt);
+        // Select prompt based on mode
+        let userPrompt = instance.customPrompt;
+        if (instance.developmentMode) {
+            userPrompt = instance.customPromptDev || instance.customPrompt;
+        } else if (instance.supportMode) {
+            userPrompt = instance.customPromptSupport || currentSettings.defaultSupportPrompt || DEFAULT_SUPPORT_PROMPT;
+        }
+
+        let prompt = testMode ? 'Test' : (userPrompt || currentSettings.autoPrompt || currentSettings.defaultPrompt);
+
+        // Inject context for GitHub mode (if not in test mode)
+        if (!testMode && (instance.supportMode || instance.developmentMode) && instance.currentIssueBody && instance.currentIssueTitle) {
+            const context = `CONTEXTO DEL ISSUE (${instance.currentIssueTitle}):\n${instance.currentIssueBody}\n\nINSTRUCCIONES:\n`;
+            if (userPrompt) {
+                prompt = context + userPrompt;
+            } else {
+                prompt = context + (currentSettings.autoPrompt || currentSettings.defaultPrompt);
+            }
+        }
+
+        // Ensure issue is marked in-progress
+        await ensureIssueInProgress(instance);
+
         await writeToChat(instance.windowHandle, prompt);
 
-        // Update status
+        // Update status and lastPromptSent
         instances.update(list =>
             list.map(i => i.id === instanceId
-                ? { ...i, retryCount: 0, status: 'working', lastActivity: Date.now(), stepCount: i.stepCount + 1 }
+                ? { ...i, retryCount: 0, status: 'working', lastActivity: Date.now(), stepCount: i.stepCount + 1, lastPromptSent: Date.now() }
                 : i
             )
         );
-        return `Sent prompt: "${prompt}"`;
+        return `Sent prompt: "${prompt.substring(0, 50)}..."`;
     }
 
     return 'No action needed - Antigravity is working';
 }
 
 // UI Polling state
-let pollingInterval: ReturnType<typeof setInterval> | null = null;
+let pollingTimeout: ReturnType<typeof setTimeout> | null = null;
 let pollingActive = false;
+
+// Poll loop logic that handles inactivity checks and instance processing
+async function pollOnce(): Promise<void> {
+    const currentSettings = get(settings);
+
+    // Update silent mode connections first
+    await updateSilentModeConnections();
+
+    const currentInstances = get(instances);
+
+    for (const instance of currentInstances) {
+        if (!pollingActive) break;
+
+
+        if (!instance.enabled || instance.isBlocked) continue;
+
+        // Inactivity check
+        const inactivityMs = currentSettings.inactivityTimeoutMinutes * 60 * 1000;
+        const lastPrompt = instance.lastPromptSent || 0;
+        const timeSinceLastPrompt = Date.now() - lastPrompt;
+
+        if (lastPrompt > 0 && timeSinceLastPrompt > inactivityMs) {
+            // If status is 'working', we might just be waiting for a long generation
+            if (instance.status === 'working') {
+                // Allow double the timeout for 'working' state
+                if (timeSinceLastPrompt < inactivityMs * 3) continue;
+            }
+
+            const minutesInactive = Math.round(timeSinceLastPrompt / 60000);
+            console.log(`[${instance.projectName}] ⏰ Inactivity timeout: ${minutesInactive} minutes since last prompt`);
+
+            // Disable instance
+            instances.update(list =>
+                list.map(i => i.id === instance.id
+                    ? { ...i, enabled: false, status: 'error', isBlocked: true, blockReason: `Inactivity timeout: ${minutesInactive} min` }
+                    : i
+                )
+            );
+
+            await notifyDiscordGeneric(instance, `🛑 Timeout: ${instance.projectName}`, `Detenido tras ${minutesInactive} minutos sin actividad (Timeout).`);
+            continue;
+        }
+
+        try {
+            const result = await checkAndActOnInstance(instance.id, false);
+            // Only log significant actions to avoid spam
+            if (!result.includes('No action needed')) {
+                console.log(`[${instance.projectName}] ${result}`);
+            }
+        } catch (error) {
+            console.error(`[${instance.projectName}] Error:`, error);
+        }
+    }
+
+    // Schedule next poll if still active
+    if (pollingActive) {
+        // Convert seconds to ms
+        const interval = (currentSettings.pollIntervalSeconds || 5) * 1000;
+        pollingTimeout = setTimeout(pollOnce, interval);
+    }
+}
 
 // Start automatic UI polling for all enabled instances
 export function startUIPolling(intervalMs: number = 5000): void {
     if (pollingActive) return;
 
     pollingActive = true;
-    console.log(`Starting UI polling every ${intervalMs}ms`);
+    console.log(`Starting UI polling...`);
 
-    pollingInterval = setInterval(async () => {
-        const currentInstances = get(instances);
-
-        for (const instance of currentInstances) {
-            if (!instance.enabled) continue;
-
-            try {
-                const result = await checkAndActOnInstance(instance.id, false);
-                console.log(`[${instance.projectName}] ${result}`);
-            } catch (error) {
-                console.error(`[${instance.projectName}] Error:`, error);
-            }
-        }
-    }, intervalMs);
+    // Start the recursive poll loop
+    pollOnce();
 }
 
 // Stop UI polling
 export function stopUIPolling(): void {
-    if (pollingInterval) {
-        clearInterval(pollingInterval);
-        pollingInterval = null;
+    if (pollingTimeout) {
+        clearTimeout(pollingTimeout);
+        pollingTimeout = null;
     }
     pollingActive = false;
     console.log('UI polling stopped');
 }
+
+// Aliases for compatibility
+export const startAutoImplementation = startUIPolling;
+export const stopAutoImplementation = stopUIPolling;
 
 // Check if polling is active
 export function isPollingActive(): boolean {
@@ -698,412 +1286,3 @@ async function notifyDiscordGeneric(instance: Instance, title: string, message: 
 
 // Track last time we notified about no-connection per instance to avoid spam
 const lastNoConnectionNotified: Map<string, number> = new Map();
-
-// Enhanced UI polling with stop condition detection - using recursive setTimeout to prevent overlap
-let pollingTimeout: ReturnType<typeof setTimeout> | null = null;
-
-async function pollOnce(): Promise<void> {
-    const currentSettings = get(settings);
-
-    // ========== UPDATE SILENT MODE CONNECTIONS ==========
-    // Check for newly connected extensions before processing instances
-    // This ensures we detect extensions that connect after the initial scan
-    await updateSilentModeConnections();
-
-    // Get fresh instance list after connection update
-    const currentInstances = get(instances);
-
-    for (const instance of currentInstances) {
-        if (!pollingActive) break; // Check if stopped
-        if (!instance.enabled || instance.isBlocked) continue;
-
-        // ========== INACTIVITY TIMEOUT CHECK ==========
-        // If no prompt sent in X minutes, stop project and notify Discord
-        const inactivityMs = currentSettings.inactivityTimeoutMinutes * 60 * 1000;
-        const lastPrompt = instance.lastPromptSent || 0;
-        const timeSinceLastPrompt = Date.now() - lastPrompt;
-
-        if (lastPrompt > 0 && timeSinceLastPrompt > inactivityMs) {
-            const minutesInactive = Math.round(timeSinceLastPrompt / 60000);
-            console.log(`[${instance.projectName}] ⏰ Inactivity timeout: ${minutesInactive} minutes since last prompt`);
-
-            // Disable the instance
-            instances.update(list =>
-                list.map(i => i.id === instance.id
-                    ? {
-                        ...i,
-                        enabled: false,
-                        status: 'error' as const,
-                        isBlocked: true,
-                        blockReason: `Inactivity timeout: ${minutesInactive} min`
-                    }
-                    : i
-                )
-            );
-
-            // Send Discord notification
-            if (currentSettings.discordWebhook && currentSettings.notifyOnError) {
-                try {
-                    await invoke('notify_discord', {
-                        webhookUrl: currentSettings.discordWebhook,
-                        title: `⏰ ${instance.projectName} Detenido por Inactividad`,
-                        message: `No se ha enviado ningún prompt en ${minutesInactive} minutos. El proyecto ha sido deshabilitado automáticamente.`
-                    });
-                    console.log(`[${instance.projectName}] Discord notification sent for inactivity`);
-                } catch (e) {
-                    console.error(`[${instance.projectName}] Failed to send inactivity notification:`, e);
-                }
-            }
-
-            continue; // Skip further processing for this instance
-        }
-
-        // Update backlog for this instance on every poll (with timeout)
-        try {
-            const backlogTimeout = new Promise<null>((_, reject) =>
-                setTimeout(() => reject(new Error('Backlog timeout')), 5000)
-            );
-
-            const backlogPromise = instance.issuesPath
-                ? invoke<{
-                    totalIssues: number;
-                    completedIssues: number;
-                    currentIssue: string;
-                    error?: string;
-                }>('read_backlog_direct', { issuesPath: instance.issuesPath })
-                : invoke<{
-                    totalIssues: number;
-                    completedIssues: number;
-                    currentIssue: string;
-                    error?: string;
-                }>('read_backlog', { projectPath: instance.projectPath });
-
-            const backlog = await Promise.race([backlogPromise, backlogTimeout]) as {
-                totalIssues: number;
-                completedIssues: number;
-                currentIssue: string;
-                error?: string;
-            } | null;
-
-            if (backlog && !backlog.error) {
-                instances.update(list =>
-                    list.map(i => i.id === instance.id
-                        ? {
-                            ...i,
-                            totalIssues: backlog.totalIssues,
-                            currentIssue: backlog.completedIssues,
-                            issuesCompleted: backlog.completedIssues
-                        }
-                        : i
-                    )
-                );
-
-                // ========== CHECK FOR PROJECT COMPLETION ==========
-                // If all issues are completed, disable and notify
-                if (backlog.totalIssues > 0 && backlog.completedIssues >= backlog.totalIssues) {
-                    console.log(`[${instance.projectName}] 🎉 All issues completed (${backlog.completedIssues}/${backlog.totalIssues})`);
-
-                    // Update instance to disabled and completed
-                    instances.update(list =>
-                        list.map(i => i.id === instance.id
-                            ? {
-                                ...i,
-                                enabled: false,
-                                status: 'complete' as const,
-                                isBlocked: true,
-                                blockReason: 'All issues completed'
-                            }
-                            : i
-                        )
-                    );
-
-                    // Send Discord notification
-                    if (currentSettings.discordWebhook && currentSettings.notifyOnComplete) {
-                        try {
-                            await invoke('notify_discord', {
-                                webhookUrl: currentSettings.discordWebhook,
-                                title: `🎉 ${instance.projectName} Completado!`,
-                                message: `Todos los issues han sido completados (${backlog.completedIssues}/${backlog.totalIssues}). El proyecto ha sido deshabilitado automáticamente.`
-                            });
-                            console.log(`[${instance.projectName}] Discord notification sent for completion`);
-                        } catch (e) {
-                            console.error(`[${instance.projectName}] Failed to send completion notification:`, e);
-                        }
-                    }
-
-                    continue; // Skip further processing for this instance
-                }
-            }
-        } catch (e) {
-            // Ignore backlog read errors, continue with detection
-        }
-
-        // ========== SILENT MODE PATH ==========
-        // If companion extension is connected, use WebSocket instead of pixel scanning
-        if (instance.connectionMode === 'silent' && instance.silentWindowId) {
-            try {
-                // Request FRESH state from extension (not cached)
-                const silentState = await getStateSilent(instance.silentWindowId);
-
-                if (!silentState) {
-                    console.log(`[${instance.projectName}] 🔇 Silent: no state yet, waiting...`);
-                    continue;
-                }
-
-                // ========== CONSECUTIVE ERRORS (FATAL) CHECK ==========
-                if (silentState.consecutiveErrors && silentState.consecutiveErrors >= currentSettings.maxRetries) {
-                    console.log(`[${instance.projectName}] 💀 Fatal: ${silentState.consecutiveErrors} consecutive errors detected by diagnostics`);
-                    instances.update(list =>
-                        list.map(i => i.id === instance.id
-                            ? { ...i, isBlocked: true, blockReason: `${silentState.consecutiveErrors} errores consecutivos (fatal)`, status: 'error' as const, enabled: false }
-                            : i
-                        )
-                    );
-                    await notifyDiscordGeneric(
-                        instance,
-                        `💀 ${instance.projectName} - Errores Consecutivos`,
-                        `Se detectaron ${silentState.consecutiveErrors} errores consecutivos via diagnósticos. El proyecto ha sido deshabilitado.`
-                    );
-                    continue;
-                }
-
-                // ========== 503 CAPACITY ERROR CHECK ==========
-                // If API is returning 503s, agent is waiting (not stuck)
-                if (silentState.capacityErrors && silentState.capacityErrors > 0) {
-                    console.log(`[${instance.projectName}] ⏳ API capacity: ${silentState.capacityErrors} recent 503 errors`);
-                    instances.update(list =>
-                        list.map(i => i.id === instance.id
-                            ? { ...i, status: 'working' as const, blockReason: `Waiting for API capacity (${silentState.capacityErrors} x 503)`, lastActivity: Date.now() }
-                            : i
-                        )
-                    );
-                    // Don't count this toward inactivity — agent is trying but API is saturated
-                    continue;
-                }
-
-                console.log(`[${instance.projectName}] 🔇 Silent state: accept=${silentState.hasAcceptButton}, retry=${silentState.hasRetryButton}, enter=${silentState.hasEnterButton}, terminal=${silentState.terminalPending}, working=${silentState.agentWorking}`);
-
-                // Accept terminal commands
-                if (silentState.terminalPending) {
-                    console.log(`[${instance.projectName}] 🔇 Accepting terminal command`);
-                    await acceptTerminalSilent(instance.silentWindowId);
-                    instances.update(list =>
-                        list.map(i => i.id === instance.id
-                            ? { ...i, lastActivity: Date.now(), retryCount: 0 }
-                            : i
-                        )
-                    );
-                    continue;
-                }
-
-                // Accept pending changes
-                if (silentState.hasAcceptButton) {
-                    console.log(`[${instance.projectName}] 🔇 Accepting changes`);
-                    await acceptAllSilent(instance.silentWindowId);
-                    instances.update(list =>
-                        list.map(i => i.id === instance.id
-                            ? { ...i, lastActivity: Date.now(), retryCount: 0 }
-                            : i
-                        )
-                    );
-                    continue;
-                }
-
-                // Handle retry
-                if (silentState.hasRetryButton) {
-                    const maxRetries = currentSettings.maxRetries;
-                    if (instance.retryCount >= maxRetries) {
-                        instances.update(list =>
-                            list.map(i => i.id === instance.id
-                                ? { ...i, isBlocked: true, blockReason: 'Max retries reached', status: 'error' as const, enabled: false }
-                                : i
-                            )
-                        );
-                        await notifyStopCondition(instance, 'Max retries reached');
-                    } else {
-                        console.log(`[${instance.projectName}] 🔇 Retrying (${instance.retryCount + 1}/${maxRetries})`);
-                        await retrySilent(instance.silentWindowId);
-                        instances.update(list =>
-                            list.map(i => i.id === instance.id
-                                ? { ...i, retryCount: i.retryCount + 1, lastActivity: Date.now() }
-                                : i
-                            )
-                        );
-                    }
-                    continue;
-                }
-
-                // Chat ready — send prompt
-                if (silentState.hasEnterButton && !silentState.agentWorking) {
-                    // Exponential backoff cooldowns: 1st=120s(2min), 2nd=180s(3min), 3rd=900s(15min)
-                    const BACKOFF_SECONDS = [120, 180, 900];
-
-                    // Check if step has advanced since last prompt
-                    const currentStep = silentState.currentStepIndex || 0;
-                    const stepAdvanced = instance.stepIndexAtLastPrompt === undefined ||
-                        currentStep !== instance.stepIndexAtLastPrompt;
-
-                    // Determine cooldown based on no-advance count
-                    const noAdvanceCount = stepAdvanced ? 0 : (instance.noAdvanceCount || 0);
-                    const cooldownIndex = Math.min(noAdvanceCount, BACKOFF_SECONDS.length - 1);
-                    const promptCooldownMs = BACKOFF_SECONDS[cooldownIndex] * 1000;
-                    const timeSinceLastPrompt = Date.now() - (instance.lastPromptSent || 0);
-
-                    if (timeSinceLastPrompt < promptCooldownMs) {
-                        console.log(`[${instance.projectName}] ⏳ Cooldown: waiting ${Math.ceil((promptCooldownMs - timeSinceLastPrompt) / 1000)}s (backoff level ${noAdvanceCount})`);
-                        continue;
-                    }
-
-                    // If no advancement after all retries, block the instance
-                    if (!stepAdvanced && noAdvanceCount >= BACKOFF_SECONDS.length) {
-                        console.log(`[${instance.projectName}] 🛑 No step advancement after ${noAdvanceCount} retries — blocking`);
-                        instances.update(list =>
-                            list.map(i => i.id === instance.id
-                                ? { ...i, isBlocked: true, blockReason: 'No step advancement after retries', status: 'error' as const, enabled: false }
-                                : i
-                            )
-                        );
-                        await notifyStopCondition(instance, `No step advancement after ${noAdvanceCount} retries`);
-                        continue;
-                    }
-
-                    const prompt = instance.customPrompt || currentSettings.autoPrompt;
-                    const newNoAdvanceCount = stepAdvanced ? 0 : noAdvanceCount + 1;
-
-                    if (newNoAdvanceCount > 0) {
-                        console.log(`[${instance.projectName}] ⚠️ No step advancement (retry ${newNoAdvanceCount}/${BACKOFF_SECONDS.length})`);
-                    }
-                    console.log(`[${instance.projectName}] 🔇 Sending prompt: "${prompt.substring(0, 50)}..."`);
-
-                    // Set lastPromptSent BEFORE sending so cooldown starts from actual send time
-                    const sendTimestamp = Date.now();
-                    instances.update(list =>
-                        list.map(i => i.id === instance.id
-                            ? {
-                                ...i,
-                                lastActivity: sendTimestamp,
-                                lastPromptSent: sendTimestamp,
-                                stepIndexAtLastPrompt: currentStep,
-                                noAdvanceCount: newNoAdvanceCount,
-                                stepCount: i.stepCount + 1,
-                                retryCount: 0,
-                                status: 'working' as const
-                            }
-                            : i
-                        )
-                    );
-
-                    await sendPromptSilent(instance.silentWindowId, prompt);
-                    continue;
-                }
-
-                // Agent working, nothing to do — but update activity timestamp from diagnostics
-                if (silentState.agentWorking) {
-                    console.log(`[${instance.projectName}] 🔇 Agent working - messages: ${silentState.messageCount || '?'}`);
-                    // Use the activity timestamp from diagnostics if available
-                    const activityTime = silentState.lastActivityTimestamp
-                        ? new Date(silentState.lastActivityTimestamp).getTime()
-                        : Date.now();
-                    instances.update(list =>
-                        list.map(i => i.id === instance.id
-                            ? { ...i, lastActivity: activityTime, status: 'working' as const, blockReason: undefined }
-                            : i
-                        )
-                    );
-                }
-                continue;
-
-            } catch (error) {
-                console.warn(`[${instance.projectName}] 🔇 Silent mode error, falling back to legacy:`, error);
-                // Fall through to legacy detection below
-            }
-        }
-
-        // ========== LEGACY MODE DISABLED ==========
-        // Silent mode is required. If no extension connected, skip this instance.
-        console.log(`[${instance.projectName}] ⚠️ No silent mode connection - skipping (install bob-helper extension in Antigravity)`);
-        instances.update(list =>
-            list.map(i => i.id === instance.id
-                ? { ...i, status: 'idle' as const }
-                : i
-            )
-        );
-
-        // Notify Discord once about missing connection (throttled to avoid spam, once per hour)
-        const lastNotified = lastNoConnectionNotified.get(instance.id) || 0;
-        if (Date.now() - lastNotified > 3600000) {
-            lastNoConnectionNotified.set(instance.id, Date.now());
-            await notifyDiscordGeneric(
-                instance,
-                `🔌 ${instance.projectName} - Sin Conexión`,
-                `No se detecta la extensión bob-helper. Instala la extensión en Antigravity para que BOB pueda controlar esta instancia.`
-            );
-        }
-    }
-}
-
-function scheduleNextPoll(intervalMs: number): void {
-    if (!pollingActive) return;
-
-    pollingTimeout = setTimeout(async () => {
-        if (!pollingActive) return;
-
-        try {
-            await pollOnce();
-        } catch (error) {
-            console.error('Poll cycle error:', error);
-        }
-
-        // Schedule next poll
-        scheduleNextPoll(intervalMs);
-    }, intervalMs);
-}
-
-export function startAutoImplementation(intervalMs?: number): void {
-    const currentSettings = get(settings);
-    const pollInterval = intervalMs || (currentSettings.pollIntervalSeconds * 1000);
-
-    if (pollingActive) {
-        console.log('Polling already active');
-        return;
-    }
-
-    pollingActive = true;
-    console.log(`Starting auto-implementation polling every ${pollInterval}ms`);
-
-    // Update backlog info immediately when starting
-    updateInstanceBacklogs();
-
-    // Setup periodic backlog refresh (every 15 minutes)
-    const backlogRefreshInterval = setInterval(() => {
-        if (pollingActive) {
-            console.log('[Backlog] Periodic refresh...');
-            updateInstanceBacklogs();
-        } else {
-            clearInterval(backlogRefreshInterval);
-        }
-    }, 15 * 60 * 1000); // 15 minutes
-
-    // Start first poll immediately, then schedule subsequent ones
-    pollOnce().then(() => {
-        scheduleNextPoll(pollInterval);
-    }).catch(error => {
-        console.error('Initial poll error:', error);
-        scheduleNextPoll(pollInterval);
-    });
-}
-
-// Stop auto-implementation
-export function stopAutoImplementation(): void {
-    pollingActive = false;
-    if (pollingTimeout) {
-        clearTimeout(pollingTimeout);
-        pollingTimeout = null;
-    }
-    if (pollingInterval) {
-        clearInterval(pollingInterval);
-        pollingInterval = null;
-    }
-    console.log('Auto-implementation stopped');
-}
-

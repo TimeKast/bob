@@ -116,15 +116,32 @@
       <h1>BOB Monitor</h1>
     </div>
     <div class="actions">
-      <button class="btn-poll" class:active={polling} onclick={togglePolling}>
+      <button
+        class="btn-poll"
+        class:active={polling}
+        onclick={(e) => {
+          togglePolling();
+          e.currentTarget.blur();
+        }}
+      >
         {polling ? "⏸️ Stop" : "▶️ Auto"}
       </button>
-      <button class="btn-scan" onclick={handleScan} disabled={scanning}>
+      <button
+        class="btn-scan"
+        onclick={(e) => {
+          handleScan();
+          e.currentTarget.blur();
+        }}
+        disabled={scanning}
+      >
         {scanning ? "🔄 Scanning..." : "🔍 Scan"}
       </button>
       <button
         class="btn-settings"
-        onclick={() => (showSettings = !showSettings)}
+        onclick={(e) => {
+          showSettings = !showSettings;
+          e.currentTarget.blur();
+        }}
       >
         ⚙️
       </button>

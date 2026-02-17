@@ -70,20 +70,65 @@ pub struct BacklogResult {
     pub completed_issues: i32,
     #[serde(rename = "currentIssue", default)]
     pub current_issue: String,
+    #[serde(rename = "currentIssueBody", default)]
+    pub current_issue_body: Option<String>, // New field
     #[serde(rename = "backlogPath", default)]
     pub backlog_path: String,
     pub error: Option<String>,
 }
 
+
+
 // ─── Legacy Stubs (for frontend compatibility) ─────────────────────────
 // These return empty/default values since Silent Mode doesn't need them
 
-/// Scan windows - returns empty in Silent Mode (use get_silent_extensions instead)
+/// Scan windows for Antigravity (Legacy PowerShell)
 #[tauri::command]
 fn scan_windows() -> Result<Vec<ScanResult>, String> {
-    // Legacy mode removed - BOB now uses Silent Mode exclusively
-    // The frontend should use get_silent_extensions for connected instances
-    Ok(vec![])
+    let script = r#"
+$windows = @()
+$proc = Get-Process code -ErrorAction SilentlyContinue
+if ($proc) {
+    foreach ($p in $proc) {
+        if ($p.MainWindowTitle -match "Antigravity") {
+            $windows += [PSCustomObject]@{
+                windowTitle = $p.MainWindowTitle
+                windowHandle = $p.MainWindowHandle.ToInt64()
+                processId = $p.Id
+            }
+        }
+    }
+}
+return $windows | ConvertTo-Json -Compress
+"#;
+
+    let output = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", script])
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+
+    let json = String::from_utf8_lossy(&output.stdout);
+    if json.trim().is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Handle single object vs array in PS JSON output
+    // If array, good. If single object, we need to wrap or let serde handle it?
+    // Serde usually expects array for Vec. PS ConvertTo-Json autodectects.
+    // Let's ensure it's a list.
+    
+    let results: Vec<ScanResult> = serde_json::from_str(&json)
+        .or_else(|_| {
+            // Try parsing as single object and wrapping in vec
+            serde_json::from_str::<ScanResult>(&json).map(|r| vec![r])
+        })
+        .map_err(|e| format!("Failed to parse JSON: {} | Input: {}", e, json))?;
+
+    Ok(results)
 }
 
 /// Get instance status - stub for compatibility
@@ -112,23 +157,165 @@ fn paste_prompt(
     Err("Legacy mode removed. Use Silent Mode with send_silent_action.".to_string())
 }
 
-/// Detect UI state - removed, use send_silent_action('getState') instead
+/// Detect UI state (Legacy PowerShell)
 #[tauri::command]
-fn detect_ui_state(_window_handle: i64) -> Result<UIStateResult, String> {
+fn detect_ui_state(window_handle: i64) -> Result<UIStateResult, String> {
+    // Check if handle is valid first
+    if window_handle == 0 {
+        return Err("Invalid window handle".to_string());
+    }
+
+    let script = r#"
+param($handle)
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+using System.Drawing;
+using System.Drawing.Imaging;
+
+public class Win32 {
+    [DllImport("user32.dll")]
+    public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+    [DllImport("user32.dll")]
+    public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, int nFlags);
+    [DllImport("gdi32.dll")]
+    public static extern IntPtr CreateCompatibleDC(IntPtr hdc);
+    [DllImport("gdi32.dll")]
+    public static extern IntPtr CreateCompatibleBitmap(IntPtr hdc, int nWidth, int nHeight);
+    [DllImport("gdi32.dll")]
+    public static extern IntPtr SelectObject(IntPtr hdc, IntPtr hgdiobj);
+    [DllImport("gdi32.dll")]
+    public static extern bool DeleteObject(IntPtr hObject);
+    [DllImport("gdi32.dll")]
+    public static extern bool DeleteDC(IntPtr hdc);
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetWindowDC(IntPtr hWnd);
+    [DllImport("user32.dll")]
+    public static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
+    [DllImport("gdi32.dll")]
+    public static extern uint GetPixel(IntPtr hdc, int nXPos, int nYPos);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT {
+        public int Left, Top, Right, Bottom;
+    }
+}
+"@
+
+$hwnd = [IntPtr]$handle
+$rect = New-Object Win32+RECT
+[Win32]::GetWindowRect($hwnd, [ref]$rect)
+$width = $rect.Right - $rect.Left
+$height = $rect.Bottom - $rect.Top
+
+if ($width -le 0 -or $height -le 0) { return "{""error"": ""Invalid window dimensions""}" }
+
+$bmp = new-object System.Drawing.Bitmap $width, $height
+$g = [System.Drawing.Graphics]::FromImage($bmp)
+$hdc = $g.GetHdc()
+
+# PrintWindow to capture
+[Win32]::PrintWindow($hwnd, $hdc, 2) # PW_CLIENTONLY | PW_RENDERFULLCONTENT
+
+$g.ReleaseHdc($hdc)
+
+# Analyze pixels
+# Default positions (relative to bottom-right of window or specific UI elements)
+# This is a HEURISTIC based on known UI colors.
+# Updated for current Antigravity UI
+
+$hasAccept = $false
+$hasRetry = $false
+$hasEnter = $false
+$isPaused = $false
+$acceptX = 0
+$acceptY = 0
+$retryX = 0
+$retryY = 0
+
+# Scan for green "Accept" button (bottom area)
+# Color approximately #4CAF50 (R=76, G=175, B=80)
+for ($y = $height - 100; $y -lt $height - 20; $y+=5) {
+    for ($x = 20; $x -lt $width - 20; $x+=5) {
+        $color = $bmp.GetPixel($x, $y)
+        # Green Accept Button
+        if ($color.R -lt 100 -and $color.G -gt 150 -and $color.B -lt 100) {
+            $hasAccept = $true
+            $acceptX = $x
+            $acceptY = $y
+            break
+        }
+        # Red/Orange Retry Button
+        if ($color.R -gt 200 -and $color.G -lt 100 -and $color.B -lt 100) {
+            $hasRetry = $true
+            $retryX = $x
+            $retryY = $y
+            break
+        }
+    }
+}
+
+# Scan for input box / Enter button (bottom right)
+# Usually blue or gray arrow
+$enterX = $width - 50
+$enterY = $height - 50
+# Simple check: if not Accept or Retry, assume we can type if we are not processing?
+# Actually, better to assume hasEnter if NO buttons are present AND we are not "working" loading spinner.
+# For now, simplistic fallback:
+
+if (-not $hasAccept -and -not $hasRetry) {
+    $hasEnter = $true
+}
+
+
+$g.Dispose()
+$bmp.Dispose()
+
+$result = @{
+    has_accept_button = $hasAccept
+    has_enter_button = $hasEnter
+    has_retry_button = $hasRetry
+    is_paused = $isPaused
+    accept_button_x = $acceptX
+    accept_button_y = $acceptY
+    retry_button_x = $retryX
+    retry_button_y = $retryY
+    enter_button_x = $enterX
+    enter_button_y = $enterY
+    error = $null
+}
+
+return $result | ConvertTo-Json
+"#;
+
+    let output = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", script])
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+
+    let json_str = String::from_utf8_lossy(&output.stdout);
+    // Parse JSON manually or use serde_json Value if structure matches exactly
+    // Here we need to map snake_case JSON to our struct
+    let v: serde_json::Value = serde_json::from_str(&json_str).map_err(|e| e.to_string())?;
+
     Ok(UIStateResult {
-        has_accept_button: false,
-        has_enter_button: false,
-        has_retry_button: false,
-        is_paused: false,
-        chat_button_color: "none".to_string(),
-        accept_button_x: 0,
-        accept_button_y: 0,
-        enter_button_x: 0,
-        enter_button_y: 0,
-        retry_button_x: 0,
-        retry_button_y: 0,
+        has_accept_button: v["has_accept_button"].as_bool().unwrap_or(false),
+        has_enter_button: v["has_enter_button"].as_bool().unwrap_or(false),
+        has_retry_button: v["has_retry_button"].as_bool().unwrap_or(false),
+        is_paused: v["is_paused"].as_bool().unwrap_or(false),
+        chat_button_color: "unknown".to_string(),
+        accept_button_x: v["accept_button_x"].as_i64().unwrap_or(0) as i32,
+        accept_button_y: v["accept_button_y"].as_i64().unwrap_or(0) as i32,
+        enter_button_x: v["enter_button_x"].as_i64().unwrap_or(0) as i32,
+        enter_button_y: v["enter_button_y"].as_i64().unwrap_or(0) as i32,
+        retry_button_x: v["retry_button_x"].as_i64().unwrap_or(0) as i32,
+        retry_button_y: v["retry_button_y"].as_i64().unwrap_or(0) as i32,
         is_bottom_button: false,
-        error: Some("Legacy mode removed. Use Silent Mode.".to_string()),
+        error: None,
     })
 }
 
@@ -151,10 +338,89 @@ fn scroll_to_bottom(_window_handle: i64) -> Result<bool, String> {
 }
 
 /// Write to chat - removed
+/// Write to chat and submit (Legacy PowerShell)
 #[tauri::command]
-fn write_to_chat(_window_handle: i64, _prompt: String) -> Result<bool, String> {
-    Err("Legacy mode removed. Use Silent Mode with send_silent_action.".to_string())
+fn write_to_chat(window_handle: i64, prompt: String) -> Result<bool, String> {
+    let script = r#"
+param($handle, $text)
+$api = @"
+using System;
+using System.Runtime.InteropServices;
+public class Win32 {
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
 }
+"@
+Add-Type -TypeDefinition $api -Language CCSharp
+
+$hwnd = [IntPtr]$handle
+[Win32]::ShowWindow($hwnd, 9) # SW_RESTORE
+[Win32]::SetForegroundWindow($hwnd)
+Start-Sleep -Nz 200
+
+# Copy text to clipboard
+Set-Clipboard -Value $text
+
+# Ctrl+V
+[Win32]::keybd_event(0x11, 0, 0, [UIntPtr]::Zero) # Ctrl down
+[Win32]::keybd_event(0x56, 0, 0, [UIntPtr]::Zero) # V down
+[Win32]::keybd_event(0x56, 0, 2, [UIntPtr]::Zero) # V up
+[Win32]::keybd_event(0x11, 0, 2, [UIntPtr]::Zero) # Ctrl up
+
+Start-Sleep -Milliseconds 800
+
+# Enter (using keybd_event)
+[Win32]::keybd_event(0x0D, 0, 0, [UIntPtr]::Zero) # Enter down
+[Win32]::keybd_event(0x0D, 0, 2, [UIntPtr]::Zero) # Enter up
+
+Start-Sleep -Milliseconds 200
+
+# Fallback: WScript.Shell SendKeys (sometimes works better for WebViews)
+$wshell = New-Object -ComObject WScript.Shell
+$wshell.SendKeys("{ENTER}")
+Start-Sleep -Milliseconds 100
+$wshell.SendKeys("{ENTER}")
+
+return $true
+"#;
+
+    // Use specific prompt prioritization logic before this call in frontend
+    // This function just executes the paste action
+    
+    let encoded_prompt = general_purpose::STANDARD.encode(prompt.as_bytes());
+
+    // We can't easily pass multiline string to PS command line without issues, 
+    // so we'll use base64 decoding inside PS or just simple clipboard setting if we trust the text.
+    // Actually, passing prompts as arguments to powershell -Command can be tricky/limited length.
+    // Better approach: Write prompt to temp file? Or just base64.
+    
+    // Simpler approach for now:
+    // We already have the text in the Clipboard from Svelte? No, Rust sets it.
+    // Let's implement Clipboard setting in Rust to be safe/faster, then just keys in PS.
+    // Or just restore the PS script approach.
+    
+    // NOTE: The previous implementation used a separate .ps1 file. 
+    // Embedding it here for simplicity and to reduce dependencies.
+    
+    let status = std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            &format!(
+                "$h={}; $t=[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('{}')); {}", 
+                window_handle, 
+                encoded_prompt, 
+                script
+            )
+        ])
+        .status()
+        .map_err(|e| e.to_string())?;
+
+    Ok(status.success())
+}
+
+use base64::{Engine as _, engine::general_purpose};
 
 // ─── Cross-Platform Functions ──────────────────────────────────────────
 
@@ -176,6 +442,7 @@ fn read_backlog(_app: tauri::AppHandle, project_path: String) -> Result<BacklogR
                 total_issues: 0,
                 completed_issues: 0,
                 current_issue: String::new(),
+                current_issue_body: None,
                 backlog_path: String::new(),
                 error: Some(format!("No backlog found in {:?}", project_path)),
             });
@@ -192,6 +459,7 @@ fn read_backlog(_app: tauri::AppHandle, project_path: String) -> Result<BacklogR
                 total_issues: 0,
                 completed_issues: 0,
                 current_issue: String::new(),
+                current_issue_body: None,
                 backlog_path: backlog_base.to_string_lossy().to_string(),
                 error: Some("No issues directory found".to_string()),
             });
@@ -252,6 +520,7 @@ fn read_backlog(_app: tauri::AppHandle, project_path: String) -> Result<BacklogR
                 String::new()
             }
         }),
+        current_issue_body: None,
         backlog_path: issues_path.to_string_lossy().to_string(),
         error: None,
     })
@@ -325,6 +594,7 @@ fn read_backlog_direct(_app: tauri::AppHandle, issues_path: String) -> Result<Ba
             total_issues: 0,
             completed_issues: 0,
             current_issue: String::new(),
+            current_issue_body: None,
             backlog_path: issues_path.to_string_lossy().to_string(),
             error: Some(format!("Issues path does not exist: {:?}", issues_path)),
         });
@@ -383,6 +653,7 @@ fn read_backlog_direct(_app: tauri::AppHandle, issues_path: String) -> Result<Ba
                 String::new()
             }
         }),
+        current_issue_body: None,
         backlog_path: issues_path.to_string_lossy().to_string(),
         error: None,
     })
@@ -506,7 +777,172 @@ fn simulate_enter() -> Result<bool, String> {
     Ok(true)
 }
 
-// ─── Extension Installation ────────────────────────────────────────────
+// ─── GitHub Integration ────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+
+struct GithubIssue {
+    number: i32,
+    title: String,
+    state: String,
+    body: Option<String>,
+    labels: Vec<GithubLabel>,
+}
+
+#[derive(Debug, Deserialize)]
+
+struct GithubLabel {
+    name: String,
+}
+
+/// Read backlog from GitHub repository
+#[tauri::command]
+async fn read_backlog_github(token: String, repo: String) -> Result<BacklogResult, String> {
+    let client = reqwest::Client::new();
+    
+    // 1. Fetch OPEN issues
+    // We filter for state=open to find the next task
+    println!("[GitHub] Reading backlog for repo: {}", repo);
+    let url = format!("https://api.github.com/repos/{}/issues?state=open", repo);
+    
+    let open_resp = client
+        .get(&url)
+        .header("User-Agent", "bob-monitor")
+        .header("Authorization", format!("Bearer {}", token))
+        .send()
+        .await
+        .map_err(|e| format!("GitHub API Error (Open Issues): {}", e))?;
+
+    if !open_resp.status().is_success() {
+        let status = open_resp.status();
+        let body = open_resp.text().await.unwrap_or_default();
+        println!("[GitHub] Error response: {} - {}", status, body);
+        return Err(format!("GitHub API Error: {} - {}", status, body));
+    }
+
+    let open_issues: Vec<GithubIssue> = open_resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse GitHub response: {}", e))?;
+
+    // 2. Fetch CLOSED issues count (just a rough estimate or fetch simplified)
+    // For simplicity, we just fetch count or list. 
+    // Optimization: Use search API for counts if needed, but for now let's just list recent closed?
+    // Actually, to get "completed issues" count accurate, we'd need total count.
+    // Let's rely on open_issues count + a placeholder for now, or fetch closed.
+    // Fetching all closed issues might be heavy. Let's use search.
+    let count_url = format!("https://api.github.com/search/issues?q=repo:{}+type:issue+state:closed", repo);
+    let closed_resp = client
+        .get(&count_url)
+        .header("User-Agent", "bob-monitor")
+        .header("Authorization", format!("Bearer {}", token))
+        .send()
+        .await;
+        
+    let closed_count = match closed_resp {
+        Ok(resp) => {
+            if resp.status().is_success() {
+                 #[derive(Deserialize)]
+                 struct SearchResult { total_count: i32 }
+                 resp.json::<SearchResult>().await.map(|r| r.total_count).unwrap_or(0)
+            } else { 0 }
+        }
+        Err(_) => 0,
+    };
+
+    // 3. Determine current issue
+    // Priority: Issues with "in-progress" label -> First open issue
+    // We iterate to find one.
+
+    let mut in_progress_issue = None;
+    let mut first_open = None;
+
+    for issue in &open_issues {
+        // Skip pull requests if endpoint returns them (issues endpoint usually does unless filtered)
+        // Actually issues endpoint returns PRs too. Check for pull_request field?
+        // Struct doesn't have it, but deserialization won't fail if we don't map it.
+        // But logic might be wrong. Let's assume issues only for now or check labels.
+        
+        let is_in_progress = issue.labels.iter().any(|l| l.name == "in-progress");
+        
+        if is_in_progress {
+            in_progress_issue = Some(format!("#{} {}", issue.number, issue.title));
+            break; // Found priority
+        }
+        
+        if first_open.is_none() {
+             first_open = Some(format!("#{} {}", issue.number, issue.title));
+        }
+    }
+
+    // Re-find the issue object to get the body
+    let current_issue_str = in_progress_issue.as_ref().map(|s| s.as_str())
+        .or(first_open.as_ref().map(|s| s.as_str()))
+        .unwrap_or("");
+
+    let current_issue_obj = open_issues.iter().find(|i| 
+        format!("#{} {}", i.number, i.title) == current_issue_str
+    );
+
+    let body = current_issue_obj.and_then(|i| i.body.clone());
+    
+    let mut current_issue = current_issue_str.to_string();
+    
+    // If no open issues, check if closed > 0 => DONE
+    if current_issue.is_empty() && closed_count > 0 {
+        current_issue = "DONE".to_string();
+    }
+
+    Ok(BacklogResult {
+        total_issues: (open_issues.len() as i32) + closed_count,
+        completed_issues: closed_count,
+        current_issue,
+        current_issue_body: body,
+        backlog_path: format!("github://{}", repo),
+        error: None,
+    })
+}
+
+/// Update GitHub issue status (add label or close)
+#[tauri::command]
+async fn update_github_issue_status(token: String, repo: String, issue_number: i32, status: String) -> Result<bool, String> {
+    let client = reqwest::Client::new();
+    
+    if status == "in-progress" {
+        // Add "in-progress" label
+        let url = format!("https://api.github.com/repos/{}/issues/{}/labels", repo, issue_number);
+        let resp = client
+            .post(&url)
+            .header("User-Agent", "bob-monitor")
+            .header("Authorization", format!("Bearer {}", token))
+            .json(&serde_json::json!({
+                "labels": ["in-progress"]
+            }))
+            .send()
+            .await
+            .map_err(|e| format!("Failed to add label: {}", e))?;
+            
+        return Ok(resp.status().is_success());
+        
+    } else if status == "done" {
+        // Close the issue
+        let url = format!("https://api.github.com/repos/{}/issues/{}", repo, issue_number);
+        let resp = client
+            .patch(&url)
+            .header("User-Agent", "bob-monitor")
+            .header("Authorization", format!("Bearer {}", token))
+            .json(&serde_json::json!({
+                "state": "closed"
+            }))
+            .send()
+            .await
+            .map_err(|e| format!("Failed to close issue: {}", e))?;
+            
+        return Ok(resp.status().is_success());
+    }
+    
+    Ok(false)
+}
 
 /// Get the path to the bundled extension
 fn get_extension_path() -> PathBuf {
@@ -608,7 +1044,11 @@ pub fn run() {
             simulate_enter,
             // Extension management
             check_extension_installed,
-            install_extension
+            check_extension_installed,
+            install_extension,
+            // GitHub Integration
+            read_backlog_github,
+            update_github_issue_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

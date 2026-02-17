@@ -40,7 +40,7 @@ const vscode = __importStar(require("vscode"));
 let interval = null;
 let statusBar;
 function activate(context) {
-    console.log('BOB Auto Clicker v0.6.0 activated');
+    console.log('BOB Auto Clicker v0.7.0 activated');
     // Create clickable status bar item
     statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     statusBar.command = 'bobAutoclicker.showMenu';
@@ -167,6 +167,13 @@ function stopAutoClicker() {
 }
 async function tryAccept(cfg) {
     console.log(`BOB: Attempting accept (Accept: ${cfg.enableAccept}, AcceptAll: ${cfg.enableAcceptAll})`);
+    // Focus agent panel to ensure context (safe, minimal)
+    try {
+        await vscode.commands.executeCommand('antigravity.agentPanel.focus');
+    }
+    catch {
+        // Ignore
+    }
     // Accept All - just call the command
     if (cfg.enableAcceptAll) {
         try {
